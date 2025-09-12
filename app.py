@@ -10,7 +10,7 @@ def resolve_data_dir():
     candidates = [
         Path(__file__).resolve().parent / "data" / "processed" / "portfolio",          # app.py en raíz
         Path.cwd() / "data" / "processed" / "portfolio",                               # CWD del runtime
-        Path(__file__).resolve().parents[1] / "data" / "processed" / "portfolio",      # por si lo vuelves a mover a /app
+        Path(__file__).resolve().parents[1] / "data" / "processed" / "portfolio",      # por si lo mueves a /app
     ]
     for p in candidates:
         if p.exists() and any(p.glob("pnl_weekly_*.csv")):
@@ -105,7 +105,8 @@ bank_chart = (
             title="Bankroll ($)",
             scale=alt.Scale(domain=[ymin - pad, ymax + pad], zero=False, nice=False),
         ),
-        tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
+        tooltip=[alt.Tooltip("week_label:N", title="Week"),
+                 alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
     )
     .properties(height=320, width="container")
 )
@@ -113,8 +114,11 @@ bank_chart = (
 st.subheader(f"Bankroll — {season}")
 st.altair_chart(bank_chart, use_container_width=True)
 
-# Profit semanal (barras con baseline 0)
-prof = df[["week_label", "profit", "stake"]].fillna(0)
+# Profit semanal (barras con baseline 0) — ¡sin fillna sobre week_label!
+prof = df[["week_label"]].copy()
+prof["profit"] = pd.to_numeric(df.get("profit"), errors="coerce").fillna(0.0)
+prof["stake"]  = pd.to_numeric(df.get("stake"),  errors="coerce").fillna(0.0)
+
 profit_chart = (
     alt.Chart(prof)
     .mark_bar()
@@ -124,7 +128,7 @@ profit_chart = (
         tooltip=[
             alt.Tooltip("week_label:N", title="Week"),
             alt.Tooltip("profit:Q", title="Profit", format="$.2f"),
-            alt.Tooltip("stake:Q", title="Stake", format="$.2f"),
+            alt.Tooltip("stake:Q",  title="Stake",  format="$.2f"),
         ],
     )
     .properties(height=260, width="container")
