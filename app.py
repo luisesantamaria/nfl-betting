@@ -4,19 +4,29 @@ from pathlib import Path
 
 st.set_page_config(page_title="NFL EV Betting - Portfolio", layout="wide")
 
-# Ruta a los CSV semanales
-DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "processed" / "portfolio"
+# --- Resolver ruta de datos de forma robusta ---
+def resolve_data_dir():
+    candidates = [
+        Path(__file__).resolve().parent / "data" / "processed" / "portfolio",  # app.py en raíz
+        Path.cwd() / "data" / "processed" / "portfolio",                       # cwd del runtime
+        Path(__file__).resolve().parents[1] / "data" / "processed" / "portfolio",  # por si lo mueves a app/
+    ]
+    for p in candidates:
+        files = list((p).glob("pnl_weekly_*.csv"))
+        if p.exists() and files:
+            return p
+    # si ninguna tiene archivos, devolvemos la más probable (raíz) para mensaje de error
+    return candidates[0]
+
+DATA_DIR = resolve_data_dir()
 
 @st.cache_data
 def list_season_files():
-    if not DATA_DIR.exists():
-        return {}
     files = sorted(DATA_DIR.glob("pnl_weekly_*.csv"))
     out = {}
     for f in files:
-        # pnl_weekly_2024.csv -> 2024
         try:
-            season = int(f.stem.split("_")[-1])
+            season = int(f.stem.split("_")[-1])  # pnl_weekly_2024.csv -> 2024
             out[season] = f
         except Exception:
             pass
@@ -25,26 +35,25 @@ def list_season_files():
 @st.cache_data
 def load_weekly_pnl(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
-    # Orden y tipos
-    if "week" in df.columns:
-        df["week"] = pd.to_numeric(df["week"], errors="coerce")
-    if "profit" in df.columns:
-        df["profit"] = pd.to_numeric(df["profit"], errors="coerce").fillna(0.0)
-    if "stake" in df.columns:
-        df["stake"] = pd.to_numeric(df["stake"], errors="coerce").fillna(0.0)
-    if "bankroll" in df.columns:
-        df["bankroll"] = pd.to_numeric(df["bankroll"], errors="coerce")
+    for col in ("week","profit","stake","bankroll"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
 st.title("NFL EV Betting — Portfolio")
 
 season_files = list_season_files()
 if not season_files:
-    st.warning("No encontré archivos `pnl_weekly_*.csv` en `data/processed/portfolio/`.")
+    st.error("No encontré archivos `pnl_weekly_*.csv` en tu repo.")
+    st.caption(f"Busqué en: `{DATA_DIR}`")
     st.stop()
 
 default_season = max(season_files.keys())
-season = st.selectbox("Season", options=sorted(season_files.keys()), index=sorted(season_files.keys()).index(default_season))
+season = st.selectbox(
+    "Season",
+    options=sorted(season_files.keys()),
+    index=sorted(season_files.keys()).index(default_season),
+)
 
 df = load_weekly_pnl(season_files[season])
 
