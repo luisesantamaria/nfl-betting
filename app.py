@@ -71,20 +71,20 @@ else:
     df = df.sort_values("__order").drop(columns="__order")
 df["week_label"] = pd.Categorical(df["week_label"], categories=ORDER_LABELS, ordered=True)
 
-# ---------- Métricas ----------
-if len(df):
-    initial_bankroll = float(df["bankroll"].iloc[0] - df["profit"].iloc[0])  # aprox. inicial
-    final_bankroll   = float(df["bankroll"].iloc[-1])
-    total_profit     = float(df["profit"].sum())
-    total_stake      = float(df["stake"].sum())
-    yield_pct        = (total_profit / total_stake * 100.0) if total_stake > 0 else 0.0
-else:
-    initial_bankroll = final_bankroll = 1000.0
-    total_profit = total_stake = yield_pct = 0.0
+# ---------- Métricas (cálculo correcto) ----------
+profit_series = pd.to_numeric(df.get("profit"), errors="coerce").fillna(0.0)
+stake_series  = pd.to_numeric(df.get("stake"),  errors="coerce").fillna(0.0)
+bank_series   = pd.to_numeric(df.get("bankroll"), errors="coerce")
+
+final_bankroll   = float(bank_series.iloc[-1]) if len(bank_series) else 0.0
+total_profit     = float(profit_series.sum())
+initial_bankroll = float(final_bankroll - total_profit)  # clave
+total_stake      = float(stake_series.sum())
+yield_pct        = (total_profit / total_stake * 100.0) if total_stake > 0 else 0.0
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Initial", f"${initial_bankroll:,.2f}")
-c2.metric("Final",   f"${final_bankroll:,.2f}", f"{final_bankroll-initial_bankroll:,.2f}")
+c2.metric("Final",   f"${final_bankroll:,.2f}", f"{(final_bankroll-initial_bankroll):,.2f}")
 c3.metric("Total Profit", f"${total_profit:,.2f}")
 c4.metric("Yield",        f"{yield_pct:.2f}%")
 
@@ -105,8 +105,10 @@ bank_chart = (
             title="Bankroll ($)",
             scale=alt.Scale(domain=[ymin - pad, ymax + pad], zero=False, nice=False),
         ),
-        tooltip=[alt.Tooltip("week_label:N", title="Week"),
-                 alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
+        tooltip=[
+            alt.Tooltip("week_label:N", title="Week"),
+            alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f"),
+        ],
     )
     .properties(height=320, width="container")
 )
@@ -114,10 +116,12 @@ bank_chart = (
 st.subheader(f"Bankroll — {season}")
 st.altair_chart(bank_chart, use_container_width=True)
 
-# Profit semanal (barras con baseline 0) — ¡sin fillna sobre week_label!
-prof = df[["week_label"]].copy()
-prof["profit"] = pd.to_numeric(df.get("profit"), errors="coerce").fillna(0.0)
-prof["stake"]  = pd.to_numeric(df.get("stake"),  errors="coerce").fillna(0.0)
+# Profit semanal (barras con baseline 0)
+prof = pd.DataFrame({
+    "week_label": df["week_label"],
+    "profit": profit_series,
+    "stake": stake_series,
+})
 
 profit_chart = (
     alt.Chart(prof)
