@@ -40,7 +40,7 @@ def load_weekly_pnl(path: Path) -> pd.DataFrame:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
-# Orden correcto para el eje X
+# Orden correcto para el eje X (no usamos 'week' por posibles 999)
 ORDER_LABELS = [f"Week {i}" for i in range(1, 19)] + ["Wild Card", "Divisional", "Conference", "Super Bowl"]
 ORDER_INDEX  = {lab: i for i, lab in enumerate(ORDER_LABELS)}
 
@@ -62,25 +62,29 @@ season = st.selectbox(
 
 df = load_weekly_pnl(season_files[season])
 
-# ---------- Ordenar por semana / etiqueta ----------
-if "week" in df.columns and df["week"].notna().any():
-    df = df.sort_values("week")
-else:
-    df["week_label"] = df["week_label"].astype(str)
-    df["__order"] = df["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
-    df = df.sort_values("__order").drop(columns="__order")
+# ---------- Ordenar SIEMPRE por week_label ----------
+df["week_label"] = df["week_label"].astype(str)
+df["__order"] = df["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+df = df.sort_values("__order").drop(columns="__order")
 df["week_label"] = pd.Categorical(df["week_label"], categories=ORDER_LABELS, ordered=True)
 
-# ---------- Métricas (cálculo correcto) ----------
+# ---------- Métricas (reconstruyendo Initial desde la PRIMERA fila) ----------
 profit_series = pd.to_numeric(df.get("profit"), errors="coerce").fillna(0.0)
 stake_series  = pd.to_numeric(df.get("stake"),  errors="coerce").fillna(0.0)
 bank_series   = pd.to_numeric(df.get("bankroll"), errors="coerce")
 
-final_bankroll   = float(bank_series.iloc[-1]) if len(bank_series) else 0.0
-total_profit     = float(profit_series.sum())
-initial_bankroll = float(final_bankroll - total_profit)  # clave
-total_stake      = float(stake_series.sum())
-yield_pct        = (total_profit / total_stake * 100.0) if total_stake > 0 else 0.0
+if len(df):
+    first_bankroll   = float(bank_series.iloc[0])
+    first_profit     = float(profit_series.iloc[0])
+    initial_bankroll = float(first_bankroll - first_profit)      # bankroll antes de la primera semana del CSV
+    final_bankroll   = float(bank_series.iloc[-1])
+    total_profit     = float(profit_series.sum())
+    total_stake      = float(stake_series.sum())
+else:
+    initial_bankroll = final_bankroll = 0.0
+    total_profit = total_stake = 0.0
+
+yield_pct = (total_profit / total_stake * 100.0) if total_stake > 0 else 0.0
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Initial", f"${initial_bankroll:,.2f}")
