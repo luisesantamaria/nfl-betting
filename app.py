@@ -7,18 +7,18 @@ from datetime import datetime, timedelta, timezone
 st.set_page_config(page_title="NFL EV Betting - Dashboard", layout="wide")
 
 # =========================
-# Config de temporadas (ajústalo cuando tengas fechas reales)
+# Config de temporadas (ajústalo cuando quieras)
 # =========================
 SEASON_RULES = {
-    # Ejemplo realista 2024 (ajusta si quieres)
     2024: {
-        "season_start": "2024-09-05",   # Kickoff (aprox)
-        "activate_days_before": 7,      # mostrar "Preseason/Coming soon" 7 días antes
-        "bets_open_week": 3,            # bets desde Week 3
+        "season_start": "2024-09-05",
+        "season_end":   "2025-02-12",   # ~post Super Bowl
+        "activate_days_before": 7,
+        "bets_open_week": 3,
     },
-    # Prepara 2025 (puedes ajustar cuando haya fechas oficiales)
     2025: {
         "season_start": "2025-09-04",
+        "season_end":   "2026-02-11",
         "activate_days_before": 7,
         "bets_open_week": 3,
     },
@@ -28,11 +28,11 @@ SEASON_RULES = {
 # Rutas de datos
 # =========================
 def resolve_dir(*parts) -> Path:
-    """Intenta varias raíces (compatible con Streamlit Cloud)"""
+    """Intento varias raíces (compatible con Streamlit Cloud)"""
     candidates = [
-        Path(__file__).resolve().parent.joinpath(*parts),          # app.py en raíz
-        Path.cwd().joinpath(*parts),                               # CWD del runtime
-        Path(__file__).resolve().parents[1].joinpath(*parts),      # por si lo metes en /app
+        Path(__file__).resolve().parent.joinpath(*parts),      # app.py en raíz
+        Path.cwd().joinpath(*parts),                           # CWD del runtime
+        Path(__file__).resolve().parents[1].joinpath(*parts),  # por si lo mueves a /app
     ]
     for p in candidates:
         if p.exists():
@@ -41,9 +41,10 @@ def resolve_dir(*parts) -> Path:
 
 PORTFOLIO_DIR = resolve_dir("data", "processed", "portfolio")
 ARCHIVE_DIR   = resolve_dir("data", "archive")
+BETSWEEK_DIR  = resolve_dir("data", "processed", "bets")  # opcional: bets de esta semana
 
 # =========================
-# Helpers comunes
+# Helpers
 # =========================
 ORDER_LABELS = [f"Week {i}" for i in range(1, 19)] + ["Wild Card", "Divisional", "Conference", "Super Bowl"]
 ORDER_INDEX  = {lab: i for i, lab in enumerate(ORDER_LABELS)}
@@ -53,12 +54,11 @@ def list_available_seasons():
     for f in sorted(PORTFOLIO_DIR.glob("pnl_weekly_*.csv")):
         try:
             seasons.append(int(f.stem.split("_")[-1]))
-        except:  # pragma: no cover
+        except:
             pass
-    # Asegura también seasons del config, aunque todavía no existan CSVs
+    # añade seasons del config aunque aún no tengan CSV
     for y in SEASON_RULES:
-        if y not in seasons:
-            seasons.append(y)
+        seasons.append(y)
     return sorted(set(seasons))
 
 @st.cache_data
@@ -70,7 +70,7 @@ def load_pnl_weekly(year: int) -> pd.DataFrame:
     for col in ("week", "profit", "stake", "bankroll"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-    # ordenamos SIEMPRE por etiqueta
+    # ordenar SIEMPRE por etiqueta
     df["week_label"] = df["week_label"].astype(str)
     df["__order"] = df["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
     df = df.sort_values("__order").drop(columns="__order")
@@ -111,22 +111,57 @@ def load_ledger(year: int) -> pd.DataFrame:
         df["decimal_odds"] = df["ml"].apply(american_to_decimal)
     return df
 
-def season_stage(year: int) -> str:
-    """Devuelve: 'locked', 'preseason', 'in_season' según fechas del config."""
-    rule = SEASON_RULES.get(year)
-    if not rule:
-        return "unknown"
-    start = datetime.fromisoformat(rule["season_start"]).replace(tzinfo=timezone.utc)
-    now   = datetime.now(timezone.utc)
+def load_bets_this_week(year: int) -> pd.DataFrame:
+    """
+    Busca bets de esta semana para la season actual (si decides exportarlas).
+    Rutas soportadas:
+      - data/processed/bets/season=YYYY/this_week.csv
+      - data/processed/bets/this_week.csv
+    """
+    candidates = [
+        BETSWEEK_DIR / f"season={year}" / "this_week.csv",
+        BETSWEEK_DIR / "this_week.csv",
+    ]
+    for p in candidates:
+        if p.exists():
+            df = pd.read_csv(p, low_memory=False)
+            # normaliza numéricos más comunes
+            for col in ("decimal_odds", "ml", "stake", "model_prob", "edge", "ev"):
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+            return df
+    return pd.DataFrame()
+
+def season_stage(year: int, pnl_df: pd.DataFrame) -> str:
+    """
+    'locked'     -> antes de activar
+    'preseason'  -> activado pero antes del kickoff
+    'in_season'  -> entre start y end
+    'ended'      -> después del end (o si el CSV llegó a 'Super Bowl')
+    """
+    rule = SEASON_RULES.get(year, {})
+    now = datetime.now(timezone.utc)
+
+    # si el CSV ya tiene 'Super Bowl', damos por terminada
+    if not pnl_df.empty:
+        labels = set(map(str, pnl_df["week_label"].astype(str).unique()))
+        if "Super Bowl" in labels or "Conference" in labels:
+            return "ended"
+
+    start = datetime.fromisoformat(rule.get("season_start", f"{year}-09-05")).replace(tzinfo=timezone.utc)
+    end   = datetime.fromisoformat(rule.get("season_end",   f"{year+1}-02-12")).replace(tzinfo=timezone.utc)
     activate_from = start - timedelta(days=int(rule.get("activate_days_before", 0)))
+
     if now < activate_from:
         return "locked"
     if now < start:
         return "preseason"
-    return "in_season"
+    if now <= end:
+        return "in_season"
+    return "ended"
 
 # =========================
-# UI principal
+# UI
 # =========================
 st.title("NFL EV Betting — Dashboard")
 
@@ -135,150 +170,176 @@ if not seasons:
     st.warning("No seasons found.")
     st.stop()
 
-# Tabs por temporada
-season_tabs = st.tabs([str(y) for y in seasons])
+# Selector de temporada (una sola UI con 3 pestañas)
+season = st.selectbox("Season", options=seasons, index=seasons.index(max(seasons)))
 
-for tab, year in zip(season_tabs, seasons):
-    with tab:
-        stage = season_stage(year)
-        pnl = load_pnl_weekly(year)
+pnl = load_pnl_weekly(season)
+bets_all = load_ledger(season)
+stage = season_stage(season, pnl)
 
-        # Header contextual
-        subcol1, subcol2 = st.columns([3, 1])
-        with subcol1:
-            st.subheader(f"Season {year}")
-        with subcol2:
-            st.caption(f"Stage: **{stage.replace('_',' ').title()}**")
+# Header de estado
+status_map = {
+    "locked": "Locked",
+    "preseason": "Preseason",
+    "in_season": "In Season",
+    "ended": "Season Ended",
+    "unknown": "Unknown",
+}
+st.caption(f"Status: **{status_map.get(stage, 'Unknown')}**")
 
-        # Mensajes según etapa
-        if stage == "locked":
-            start = SEASON_RULES.get(year, {}).get("season_start", "?")
-            st.info(f"🚧 **Season {year}** aún no está activa. Se habilita automáticamente ~{SEASON_RULES[year]['activate_days_before']} días antes del kickoff ({start}).")
-            continue
-        elif stage == "preseason":
-            st.warning("🟡 Preseason: preparando datos. Las apuestas abren a partir de **Week 3**.")
+# Pestañas: Overview | Portfolio | Bets
+tab_overview, tab_portfolio, tab_bets = st.tabs(["Overview", "Portfolio", "Bets"])
 
-        # Sub-tabs dentro de cada season
-        sub1, sub2 = st.tabs(["Portfolio", "Bets"])
+# =========================
+# OVERVIEW
+# =========================
+with tab_overview:
+    # Sección: Bets de esta semana (arriba)
+    st.subheader("This Week’s Bets")
 
-        # ---------- PORTFOLIO ----------
-        with sub1:
-            if pnl.empty:
-                st.info("No hay `pnl_weekly` para esta temporada todavía.")
-            else:
-                # KPIs (reconstruye initial desde primera fila)
-                profits = pd.to_numeric(pnl.get("profit"), errors="coerce").fillna(0.0)
-                stakes  = pd.to_numeric(pnl.get("stake"),  errors="coerce").fillna(0.0)
-                banks   = pd.to_numeric(pnl.get("bankroll"), errors="coerce")
+    if stage == "ended":
+        st.info("✅ Season Ended — no upcoming bets.")
+    elif stage in ("locked", "preseason"):
+        rule = SEASON_RULES.get(season, {})
+        start = rule.get("season_start", "?")
+        st.info(f"🟡 No bets yet. Season activates before kickoff ({start}); las apuestas aparecen desde **Week {rule.get('bets_open_week', 3)}**.")
+    else:
+        # temporada en curso
+        bets_week = load_bets_this_week(season)
+        if bets_week.empty:
+            st.caption("No hay archivo de 'this_week.csv' todavía. Cuando lo exportes, aparecerá aquí automáticamente.")
+        else:
+            # tabla compacta típica
+            cols = [c for c in [
+                "week","week_label","schedule_date","side","team","opponent",
+                "decimal_odds","ml","model_prob","edge","ev","stake"
+            ] if c in bets_week.columns]
+            st.dataframe(bets_week[cols] if cols else bets_week, use_container_width=True)
 
-                first_bankroll   = float(banks.iloc[0])
-                first_profit     = float(profits.iloc[0])
-                initial_bankroll = float(first_bankroll - first_profit)
-                final_bankroll   = float(banks.iloc[-1])
-                total_profit     = float(profits.sum())
-                total_stake      = float(stakes.sum())
-                yield_pct        = (total_profit / total_stake * 100.0) if total_stake > 0 else 0.0
+    st.divider()
 
-                k1, k2, k3, k4 = st.columns(4)
-                k1.metric("Initial", f"${initial_bankroll:,.2f}")
-                k2.metric("Final",   f"${final_bankroll:,.2f}", f"{(final_bankroll-initial_bankroll):,.2f}")
-                k3.metric("Total Profit", f"${total_profit:,.2f}")
-                k4.metric("Yield",        f"{yield_pct:.2f}%")
+    # Sección: gráfica simple del portafolio actual (solo bankroll)
+    st.subheader("Portfolio (Bankroll)")
+    if pnl.empty:
+        st.caption("No hay `pnl_weekly` para esta temporada.")
+    else:
+        # KPIs básicos para contexto
+        profits = pd.to_numeric(pnl.get("profit"), errors="coerce").fillna(0.0)
+        banks   = pd.to_numeric(pnl.get("bankroll"), errors="coerce")
+        initial_bankroll = float(banks.iloc[0] - profits.iloc[0])
+        final_bankroll   = float(banks.iloc[-1])
+        k1, k2 = st.columns(2)
+        k1.metric("Initial", f"${initial_bankroll:,.2f}")
+        k2.metric("Final",   f"${final_bankroll:,.2f}", f"{(final_bankroll-initial_bankroll):,.2f}")
 
-                # Gráfica de bankroll (sin baseline 0)
-                bank = pnl[["week_label", "bankroll"]].dropna()
-                ymin = float(bank["bankroll"].min())
-                ymax = float(bank["bankroll"].max())
-                pad  = max(10.0, (ymax - ymin) * 0.06)
+        bank = pnl[["week_label", "bankroll"]].dropna()
+        ymin, ymax = float(bank["bankroll"].min()), float(bank["bankroll"].max())
+        pad = max(10.0, (ymax - ymin) * 0.06)
 
-                bank_chart = (
-                    alt.Chart(bank)
-                    .mark_line(point=True)
-                    .encode(
-                        x=alt.X("week_label:N", sort=list(ORDER_LABELS), title=""),
-                        y=alt.Y("bankroll:Q",
-                                title="Bankroll ($)",
-                                scale=alt.Scale(domain=[ymin - pad, ymax + pad], zero=False, nice=False)),
-                        tooltip=[alt.Tooltip("week_label:N", title="Week"),
-                                 alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
-                    )
-                    .properties(height=320, width="container")
-                )
-                st.subheader("Bankroll")
-                st.altair_chart(bank_chart, use_container_width=True)
+        chart = (
+            alt.Chart(bank)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("week_label:N", sort=list(ORDER_LABELS), title=""),
+                y=alt.Y("bankroll:Q",
+                        title="Bankroll ($)",
+                        scale=alt.Scale(domain=[ymin - pad, ymax + pad], zero=False, nice=False)),
+                tooltip=[alt.Tooltip("week_label:N", title="Week"),
+                         alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
+            )
+            .properties(height=320, width="container")
+        )
+        st.altair_chart(chart, use_container_width=True)
 
-                # Profit semanal
-                prof = pd.DataFrame({
-                    "week_label": pnl["week_label"],
-                    "profit": profits,
-                    "stake": stakes,
-                })
-                profit_chart = (
-                    alt.Chart(prof)
-                    .mark_bar()
-                    .encode(
-                        x=alt.X("week_label:N", sort=list(ORDER_LABELS), title=""),
-                        y=alt.Y("profit:Q", title="Profit ($)", scale=alt.Scale(zero=True)),
-                        tooltip=[
-                            alt.Tooltip("week_label:N", title="Week"),
-                            alt.Tooltip("profit:Q", title="Profit", format="$.2f"),
-                            alt.Tooltip("stake:Q",  title="Stake",  format="$.2f"),
-                        ],
-                    )
-                    .properties(height=260, width="container")
-                )
-                st.subheader("Weekly Profit")
-                st.altair_chart(profit_chart, use_container_width=True)
+# =========================
+# PORTFOLIO (dos gráficas + métricas)
+# =========================
+with tab_portfolio:
+    st.subheader("Portfolio")
+    if pnl.empty:
+        st.caption("No hay `pnl_weekly` para esta temporada.")
+    else:
+        profits = pd.to_numeric(pnl.get("profit"), errors="coerce").fillna(0.0)
+        stakes  = pd.to_numeric(pnl.get("stake"),  errors="coerce").fillna(0.0)
+        banks   = pd.to_numeric(pnl.get("bankroll"), errors="coerce")
 
-                with st.expander("Ver tabla semanal"):
-                    st.dataframe(pnl, use_container_width=True)
+        first_bankroll   = float(banks.iloc[0])
+        first_profit     = float(profits.iloc[0])
+        initial_bankroll = float(first_bankroll - first_profit)
+        final_bankroll   = float(banks.iloc[-1])
+        total_profit     = float(profits.sum())
+        total_stake      = float(stakes.sum())
+        yield_pct        = (total_profit / total_stake * 100.0) if total_stake > 0 else 0.0
 
-        # ---------- BETS (antes “Ledger”) ----------
-        with sub2:
-            bets = load_ledger(year)
-            # Regla de apertura de bets (Weeks 1–2 se muestra mensaje)
-            rule = SEASON_RULES.get(year, {})
-            open_wk = int(rule.get("bets_open_week", 3))
-            # Si ya hay pnl, detecta la semana máxima; si no, solo aplica regla básica
-            has_weeks = "week_label" in pnl.columns and len(pnl) > 0
-            max_wk_label = str(pnl["week_label"].max()) if has_weeks else None
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Initial", f"${initial_bankroll:,.2f}")
+        m2.metric("Final",   f"${final_bankroll:,.2f}", f"{(final_bankroll-initial_bankroll):,.2f}")
+        m3.metric("Total Profit", f"${total_profit:,.2f}")
+        m4.metric("Yield",        f"{yield_pct:.2f}%")
 
-            if stage == "in_season" and has_weeks:
-                # Si estamos antes de Week 3, mostrar aviso
-                # (El mapping a número real es aproximado, según ORDER_INDEX)
-                current_index = ORDER_INDEX.get(max_wk_label, 0)
-                need_index    = ORDER_INDEX.get(f"Week {open_wk}", 0)
-                if current_index < need_index:
-                    st.info(f"📈 Weeks 1–2: acumulando features. **Bets** se habilita a partir de **Week {open_wk}**.")
-            elif stage != "in_season":
-                st.info("Las apuestas se mostrarán una vez iniciada la temporada.")
+        # Bankroll (sin baseline 0)
+        bank = pnl[["week_label", "bankroll"]].dropna()
+        ymin, ymax = float(bank["bankroll"].min()), float(bank["bankroll"].max())
+        pad = max(10.0, (ymax - ymin) * 0.06)
 
-            if bets.empty:
-                st.caption("No hay archivo de bets para esta temporada todavía.")
-            else:
-                st.subheader("Bets")
-                # Filtros rápidos
-                colA, colB = st.columns(2)
-                teams = sorted(pd.unique(pd.concat([
-                    bets.get("team", pd.Series(dtype=str)).astype(str),
-                    bets.get("opponent", pd.Series(dtype=str)).astype(str)
-                ]).dropna()))
-                sel_teams = colA.multiselect("Team (either side)", options=teams, default=teams[:])
-                sides = ["home", "away"] if "side" in bets.columns else []
-                sel_sides = colB.multiselect("Side", options=sides, default=sides)
+        bank_chart = (
+            alt.Chart(bank)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("week_label:N", sort=list(ORDER_LABELS), title=""),
+                y=alt.Y("bankroll:Q",
+                        title="Bankroll ($)",
+                        scale=alt.Scale(domain=[ymin - pad, ymax + pad], zero=False, nice=False)),
+                tooltip=[alt.Tooltip("week_label:N", title="Week"),
+                         alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
+            )
+            .properties(height=320, width="container")
+        )
+        st.subheader("Bankroll")
+        st.altair_chart(bank_chart, use_container_width=True)
 
-                mask = pd.Series(True, index=bets.index)
-                if sel_teams:
-                    m_team = bets.get("team", pd.Series(index=bets.index, dtype=str)).astype(str).isin(sel_teams)
-                    m_opp  = bets.get("opponent", pd.Series(index=bets.index, dtype=str)).astype(str).isin(sel_teams)
-                    mask &= (m_team | m_opp)
-                if sel_sides and "side" in bets.columns:
-                    mask &= bets["side"].astype(str).str.lower().isin(sel_sides)
+        # Weekly Profit (barras)
+        prof_df = pd.DataFrame({
+            "week_label": pnl["week_label"],
+            "profit": profits,
+            "stake": stakes,
+        })
+        profit_chart = (
+            alt.Chart(prof_df)
+            .mark_bar()
+            .encode(
+                x=alt.X("week_label:N", sort=list(ORDER_LABELS), title=""),
+                y=alt.Y("profit:Q", title="Profit ($)", scale=alt.Scale(zero=True)),
+                tooltip=[
+                    alt.Tooltip("week_label:N", title="Week"),
+                    alt.Tooltip("profit:Q", title="Profit", format="$.2f"),
+                    alt.Tooltip("stake:Q",  title="Stake",  format="$.2f"),
+                ],
+            )
+            .properties(height=260, width="container")
+        )
+        st.subheader("Weekly Profit")
+        st.altair_chart(profit_chart, use_container_width=True)
 
-                view = bets[mask].copy()
-                # Algunas columnas útiles si existen
-                show_cols = [c for c in [
-                    "season","week","week_label","schedule_date","side","team","opponent",
-                    "decimal_odds","ml","stake","profit","status","result","won"
-                ] if c in view.columns]
-                st.dataframe(view[show_cols] if show_cols else view, use_container_width=True)
+        with st.expander("Ver tabla semanal"):
+            st.dataframe(pnl, use_container_width=True)
+
+# =========================
+# BETS (solo tabla, sin filtros)
+# =========================
+with tab_bets:
+    st.subheader("Bets")
+    if bets_all.empty:
+        st.caption("No hay archivo de bets para esta temporada.")
+    else:
+        # Orden por week_label y fecha si existe
+        view = bets_all.copy()
+        if "week_label" in view.columns:
+            view["week_label"] = view["week_label"].astype(str)
+            view["__order"] = view["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+            view = view.sort_values(["__order"] + ([ "schedule_date"] if "schedule_date" in view.columns else [])).drop(columns="__order")
+        cols = [c for c in [
+            "season","week","week_label","schedule_date","side","team","opponent",
+            "decimal_odds","ml","stake","profit","status","result","won"
+        ] if c in view.columns]
+        st.dataframe(view[cols] if cols else view, use_container_width=True)
