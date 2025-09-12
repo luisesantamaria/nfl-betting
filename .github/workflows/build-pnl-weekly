@@ -1,0 +1,176 @@
+name: Build PnL Weekly (from archive)
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season (e.g., 2024)"
+        required: true
+        default: "2024"
+      initial_bankroll:
+        description: "Starting bankroll"
+        required: true
+        default: "1000"
+
+permissions:
+  contents: write
+
+jobs:
+  build_pnl_weekly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: true }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy python-dateutil
+
+      - name: Materialize pnl_weekly_{season}.csv
+        env:
+          SEASON: ${{ github.event.inputs.season }}
+          INITIAL_BANKROLL: ${{ github.event.inputs.initial_bankroll }}
+        run: |
+          python - << 'PY'
+          import os, re, glob, numpy as np, pandas as pd
+          from datetime import datetime, timezone
+
+          season = os.getenv("SEASON", "2024")
+          initial_bankroll = float(os.getenv("INITIAL_BANKROLL", "1000"))
+
+          archive_dir = f"data/archive/season={season}"
+          if not os.path.isdir(archive_dir):
+            raise FileNotFoundError(f"{archive_dir} not found")
+
+          # Elige el CSV de bets dentro del archive (prioriza 'bets_ledger' o 'ledger')
+          candidates = []
+          for pat in ["bets_ledger*.csv", "ledger.csv", "*.csv"]:
+            candidates += glob.glob(os.path.join(archive_dir, pat))
+          if not candidates:
+            raise FileNotFoundError(f"No CSV ledger found in {archive_dir}")
+          # Prioriza por nombre para no agarrar odds por error
+          candidates.sort(key=lambda p: (0 if "bets_ledger" in os.path.basename(p) or os.path.basename(p)=="ledger.csv" else 1, len(os.path.basename(p))))
+          ledger_path = candidates[0]
+
+          df = pd.read_csv(ledger_path, low_memory=False)
+
+          # Helpers semana
+          ORDER_LABELS = [f"Week {i}" for i in range(1,19)] + ["Wild Card","Divisional","Conference","Super Bowl"]
+          ORDER_INDEX  = {lab:i for i,lab in enumerate(ORDER_LABELS)}
+          POST_MAP = {19:"Wild Card",20:"Divisional",21:"Conference",22:"Super Bowl"}
+
+          def week_label_from_num(n):
+            try:
+              n = int(n)
+            except Exception:
+              return "Week 999"
+            if 1 <= n <= 18: return f"Week {n}"
+            return POST_MAP.get(n, f"Week {n}")
+
+          if "week_label" not in df.columns:
+            if "week" in df.columns:
+              df["week_label"] = df["week"].apply(week_label_from_num)
+            else:
+              raise ValueError("Ledger needs 'week' or 'week_label'.")
+
+          # Tipos numéricos
+          for c in ["stake","decimal_odds","ml","profit"]:
+            if c in df.columns:
+              df[c] = pd.to_numeric(df[c], errors="coerce")
+
+          # Si falta 'profit', intentamos calcularlo
+          if "profit" not in df.columns or df["profit"].isna().all():
+            if "decimal_odds" not in df.columns and "ml" in df.columns:
+              def american_to_decimal(m):
+                if pd.isna(m): return np.nan
+                m = float(m)
+                return 1 + (100/abs(m) if m < 0 else m/100)
+              df["decimal_odds"] = df["ml"].apply(american_to_decimal)
+
+            if "won" in df.columns:
+              won = pd.to_numeric(df["won"], errors="coerce")
+            elif "result" in df.columns:
+              won = df["result"].astype(str).str.lower().map({"win":1, "won":1, "loss":0, "lose":0, "lost":0, "push":np.nan})
+            else:
+              won = pd.Series([np.nan]*len(df))
+
+            if "stake" not in df.columns:
+              df["stake"] = 0.0
+
+            profits = []
+            for i, r in df.iterrows():
+              d = float(r["decimal_odds"]) if "decimal_odds" in df.columns and pd.notna(r["decimal_odds"]) else np.nan
+              st = float(r["stake"]) if pd.notna(r.get("stake", np.nan)) else 0.0
+              w  = won.iloc[i] if i < len(won) else np.nan
+              if pd.isna(w): profits.append(0.0)
+              elif int(w) == 1 and pd.notna(d): profits.append((d - 1.0) * st)
+              elif int(w) == 0: profits.append(-st)
+              else: profits.append(0.0)
+            df["profit"] = np.round(profits, 2)
+
+          # Orden semanal
+          df["week_label"] = df["week_label"].astype(str)
+          df["week_order"] = df["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+
+          # Agregado semanal (si hay 'status', marcamos final/partial)
+          if "status" in df.columns:
+            grouped = (df.groupby("week_label", sort=False)
+                         .agg(profit=("profit","sum"),
+                              stake=("stake","sum"),
+                              status_week=("status", lambda s: "final" if (s.astype(str).str.lower()=="settled").all() else "partial"))
+                         .reset_index())
+          else:
+            grouped = (df.groupby("week_label", sort=False)
+                         .agg(profit=("profit","sum"),
+                              stake=("stake","sum"))
+                         .reset_index())
+            grouped["status_week"] = "final"
+
+          grouped["week_order"] = grouped["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+          grouped = grouped.sort_values("week_order").reset_index(drop=True)
+
+          # Bankroll acumulado
+          bk = initial_bankroll
+          seq = []
+          for _, r in grouped.iterrows():
+            bk = float(np.round(bk + float(r["profit"]), 2))
+            seq.append(bk)
+          grouped["bankroll"] = seq
+          grouped["yield_%"] = (grouped["profit"] / grouped["stake"].replace(0, np.nan) * 100.0).fillna(0.0)
+
+          # season/week num y timestamp
+          def week_num_from_label(lbl):
+            m = re.search(r"Week\\s+(\\d+)", str(lbl))
+            if m: return int(m.group(1))
+            for k,v in POST_MAP.items():
+              if str(lbl).strip().lower() == v.lower(): return k
+            return 999
+          grouped["season"] = int(season)
+          grouped["week"] = grouped["week_label"].map(week_num_from_label).astype(int)
+          grouped["updated_at_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          # Salida
+          out_dir = "data/processed/portfolio"
+          os.makedirs(out_dir, exist_ok=True)
+          out_path = os.path.join(out_dir, f"pnl_weekly_{season}.csv")
+          cols = ["season","week","week_label","profit","stake","yield_%","bankroll","status_week","updated_at_utc"]
+          grouped[cols].to_csv(out_path, index=False)
+          print(f"Wrote {out_path}")
+          PY
+
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/processed/portfolio/pnl_weekly_*.csv
+          if ! git diff --cached --quiet; then
+            git commit -m "portfolio: build pnl_weekly for ${{ github.event.inputs.season }}"
+            git push
+          else:
+            echo "No changes."
+          fi
