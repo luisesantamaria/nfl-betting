@@ -1,5 +1,6 @@
 import pandas as pd
 import streamlit as st
+import altair as alt
 from pathlib import Path
 
 st.set_page_config(page_title="NFL EV Betting - Portfolio", layout="wide")
@@ -9,7 +10,7 @@ def resolve_data_dir():
     candidates = [
         Path(__file__).resolve().parent / "data" / "processed" / "portfolio",          # app.py en raíz
         Path.cwd() / "data" / "processed" / "portfolio",                               # CWD del runtime
-        Path(__file__).resolve().parents[1] / "data" / "processed" / "portfolio",      # por si lo mueves a app/
+        Path(__file__).resolve().parents[1] / "data" / "processed" / "portfolio",      # por si lo vuelves a mover a /app
     ]
     for p in candidates:
         if p.exists() and any(p.glob("pnl_weekly_*.csv")):
@@ -87,12 +88,50 @@ c2.metric("Final",   f"${final_bankroll:,.2f}", f"{final_bankroll-initial_bankro
 c3.metric("Total Profit", f"${total_profit:,.2f}")
 c4.metric("Yield",        f"{yield_pct:.2f}%")
 
-# ---------- Gráficas ----------
+# ---------- Gráficas (Altair) ----------
+# Bankroll con eje Y ajustado (sin baseline 0)
+bank = df[["week_label", "bankroll"]].dropna()
+ymin = float(bank["bankroll"].min()) if len(bank) else 0.0
+ymax = float(bank["bankroll"].max()) if len(bank) else 1.0
+pad  = max(10.0, (ymax - ymin) * 0.06)  # 6% de margen
+
+bank_chart = (
+    alt.Chart(bank)
+    .mark_line(point=True)
+    .encode(
+        x=alt.X("week_label:N", sort=list(ORDER_LABELS), title=""),
+        y=alt.Y(
+            "bankroll:Q",
+            title="Bankroll ($)",
+            scale=alt.Scale(domain=[ymin - pad, ymax + pad], zero=False, nice=False),
+        ),
+        tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
+    )
+    .properties(height=320, width="container")
+)
+
 st.subheader(f"Bankroll — {season}")
-st.line_chart(df.set_index("week_label")["bankroll"])
+st.altair_chart(bank_chart, use_container_width=True)
+
+# Profit semanal (barras con baseline 0)
+prof = df[["week_label", "profit", "stake"]].fillna(0)
+profit_chart = (
+    alt.Chart(prof)
+    .mark_bar()
+    .encode(
+        x=alt.X("week_label:N", sort=list(ORDER_LABELS), title=""),
+        y=alt.Y("profit:Q", title="Profit ($)", scale=alt.Scale(zero=True)),
+        tooltip=[
+            alt.Tooltip("week_label:N", title="Week"),
+            alt.Tooltip("profit:Q", title="Profit", format="$.2f"),
+            alt.Tooltip("stake:Q", title="Stake", format="$.2f"),
+        ],
+    )
+    .properties(height=260, width="container")
+)
 
 st.subheader("Weekly Profit")
-st.bar_chart(df.set_index("week_label")["profit"])
+st.altair_chart(profit_chart, use_container_width=True)
 
 with st.expander("Ver tabla semanal"):
     st.dataframe(df, use_container_width=True)
