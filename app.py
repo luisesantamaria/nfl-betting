@@ -32,7 +32,15 @@ def resolve_dir(*parts) -> Path:
 PORTFOLIO_DIR = resolve_dir("data", "processed", "portfolio")
 ARCHIVE_DIR   = resolve_dir("data", "archive")
 BETSWEEK_DIR  = resolve_dir("data", "processed", "bets")   # opcional: this_week.csv
-ODDS_DIRS     = [resolve_dir("data", "processed", "odds"), resolve_dir("data")]  # donde buscar odds/resultados
+
+# Donde buscar odds/resultados (incluye tu 'bootstrap' en raíz y 'data/bootstrap')
+ODDS_DIRS     = [
+    resolve_dir("bootstrap"),                # <--- raíz/bootstrap
+    resolve_dir("data", "bootstrap"),        # <--- data/bootstrap
+    resolve_dir("data", "processed", "odds"),
+    resolve_dir("data"),
+]
+
 LOGOS_DIR     = resolve_dir("assets", "logos", "nfl")      # cache local opcional
 
 # =========================
@@ -138,7 +146,7 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
                     return {19:"Wild Card",20:"Divisional",21:"Conference",22:"Super Bowl"}.get(n, f"Week {n}")
                 df["week_label"] = df["week"].apply(week_label_from_num)
             if "week_label" in df.columns: df = add_week_order(df)
-            for c in ("team","opponent"): 
+            for c in ("team","opponent"):
                 if c in df.columns: df[c] = df[c].astype(str).map(norm_abbr)
             return df
     return pd.DataFrame()
@@ -172,15 +180,20 @@ def kpis_from_pnl(df: pd.DataFrame):
 # --------- Carga de SCORES/RESULTADOS desde archivos de odds ---------
 def _candidate_odds_files(year: int):
     names = [
-        f"target_odds_{year}.csv", f"targets_odds_{year}.csv",
-        "target_odds.csv", "targets_odds.csv", "historical_odds.csv",
+        f"odds_season_{year}.csv",           # <--- tu nombre principal
+        f"target_odds_{year}.csv",
+        f"targets_odds_{year}.csv",
+        "target_odds.csv",
+        "targets_odds.csv",
+        "historical_odds.csv",
     ]
     for d in ODDS_DIRS:
+        # nombres explícitos
         for n in names:
             p = d / n
             if p.exists(): yield p
-        # además, busca por patrón target*{year}.csv
-        for p in d.glob(f"*{year}*.csv"):
+        # patrón genérico por si cambias nombres: incluye "odds" y año
+        for p in d.glob(f"*odds*{year}*.csv"):
             yield p
 
 @st.cache_data
@@ -192,7 +205,6 @@ def load_scores_table(year: int) -> pd.DataFrame:
     frames = []
     seen = set()
     for p in _candidate_odds_files(year):
-        # evita duplicados exactos
         key = p.resolve().as_posix()
         if key in seen: continue
         seen.add(key)
@@ -200,11 +212,10 @@ def load_scores_table(year: int) -> pd.DataFrame:
             df = pd.read_csv(p, low_memory=False)
         except Exception:
             continue
-        # columnas mínimas
         cols_needed_some = {"home_team","away_team","week","season"}
         if not cols_needed_some.issubset(set(df.columns)):
             continue
-        # normaliza
+
         df = df.copy()
         for c in ("home_team","away_team"):
             df[c] = df[c].astype(str).map(norm_abbr)
@@ -215,12 +226,10 @@ def load_scores_table(year: int) -> pd.DataFrame:
                 df["schedule_date"] = pd.to_datetime(df["schedule_date"], errors="coerce")
             except Exception:
                 pass
-        # filtra por año (si el archivo es histórico)
-        if "season" in df.columns:
-            df = df[df["season"].astype("Int64").eq(year)]
+
+        df = df[df["season"].astype("Int64").eq(year)]
         if df.empty: continue
 
-        # arma pair
         df["pair"] = [make_pair(a,b) for a,b in zip(df["home_team"], df["away_team"])]
 
         keep = ["season","week","home_team","away_team","pair",
@@ -232,7 +241,6 @@ def load_scores_table(year: int) -> pd.DataFrame:
         return pd.DataFrame(columns=["season","week","home_team","away_team","pair","score_home","score_away","schedule_date"])
 
     out = pd.concat(frames, ignore_index=True)
-    # en caso de múltiples fuentes, nos quedamos con el último valor no nulo por juego
     out = (out.sort_values(["season","week","schedule_date"])
               .drop_duplicates(subset=["season","week","pair"], keep="last"))
     return out
@@ -252,7 +260,6 @@ def ensure_week_num_column(df: pd.DataFrame) -> pd.DataFrame:
 def enrich_bets_with_scores(bets_df: pd.DataFrame, year: int) -> pd.DataFrame:
     if bets_df.empty: return bets_df
     b = bets_df.copy()
-    # normaliza equipos y genera pair
     for c in ("team","opponent"):
         if c in b.columns:
             b[c] = b[c].astype(str).map(norm_abbr)
@@ -269,16 +276,13 @@ def enrich_bets_with_scores(bets_df: pd.DataFrame, year: int) -> pd.DataFrame:
         how="left",
         suffixes=("","_sc")
     )
-    # preferimos schedule_date del scores si la de bets no existe
     if "schedule_date" not in b.columns and "schedule_date_sc" in merged.columns:
         merged["schedule_date"] = merged["schedule_date_sc"]
 
-    # si no hay home/away en bets, rellenamos con los del scores
     for c in ("home_team","away_team"):
         if c not in merged.columns and f"{c}_sc" in merged.columns:
             merged[c] = merged[f"{c}_sc"]
 
-    # limpia columnas temporales
     drop_cols = [c for c in merged.columns if c.endswith("_sc")] + ["week_y"]
     merged = merged.rename(columns={"week_x":"week"}).drop(columns=[c for c in drop_cols if c in merged.columns], errors="ignore")
     return merged
@@ -427,11 +431,8 @@ with tab_portfolio:
         with c3: st.altair_chart(cum_chart, use_container_width=True)
         with c4: st.altair_chart(stake_chart, use_container_width=True)
 
-        with st.expander("Ver tabla semanal (pnl_weekly)"):
-            st.dataframe(pnl, use_container_width=True)
-
 # ---------- BETS (tarjetas compactas con SCORE) ----------
-ESPN_SLUG = ESPN_SLUG  # (alias local)
+ESPN_SLUG = ESPN_SLUG  # alias local
 
 @st.cache_data(ttl=60*60*24)
 def get_logo_url(abbr: str) -> str | None:
@@ -462,7 +463,6 @@ def bet_card(row: pd.Series):
     ml  = pd.to_numeric(row.get("ml"), errors="coerce")
     if pd.isna(ml) and pd.notna(dec): ml = decimal_to_american(dec)
 
-    # estado
     if pd.isna(wl_profit): status_color, status_label = "#888888", "OPEN"
     elif wl_profit > 0:    status_color, status_label = "#1FA37C", "WIN"
     elif wl_profit < 0:    status_color, status_label = "#D64545", "LOSS"
@@ -471,7 +471,7 @@ def bet_card(row: pd.Series):
     wk = str(row.get("week_label", row.get("week", "")))
     date_txt = str(row.get("schedule_date", ""))[:10] if pd.notna(row.get("schedule_date")) else ""
 
-    # SCORE: usa columnas enriquecidas si existen
+    # SCORE desde odds_season_YEAR.csv u otros
     sh = row.get("score_home", None); sa = row.get("score_away", None)
     htm = norm_abbr(row.get("home_team","")); atm = norm_abbr(row.get("away_team",""))
     score_txt = ""
@@ -534,23 +534,15 @@ with tab_bets:
             if "schedule_date" in view.columns: sort_cols.append("schedule_date")
             view = view.sort_values(sort_cols).drop(columns="__order")
 
-        # Tarjetas 4 por fila
+        # Tarjetas 4 por fila (sin "ver tabla completa")
         cards = list(view.itertuples(index=False))
         idx = 0
         cols_per_row = 4
         rows = math.ceil(len(cards) / cols_per_row)
-        for r in range(rows):
+        for _ in range(rows):
             col_objs = st.columns(cols_per_row)
             for j in range(cols_per_row):
                 if idx < len(cards):
                     with col_objs[j]:
                         bet_card(pd.Series(cards[idx]._asdict()))
                     idx += 1
-
-        with st.expander("Ver tabla completa"):
-            cols = [c for c in [
-                "season","week","wk_num","week_label","schedule_date","side","team","opponent",
-                "home_team","away_team","score_home","score_away",
-                "ml","decimal_odds","stake","profit","status","result","won"
-            ] if c in view.columns]
-            st.dataframe(view[cols] if cols else view, use_container_width=True)
