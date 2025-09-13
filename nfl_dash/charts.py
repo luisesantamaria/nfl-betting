@@ -1,13 +1,18 @@
+# nfl_dash/charts.py
 import altair as alt
 import pandas as pd
 from .utils import ORDER_INDEX
 
 
 def _week_sort(domain=None):
-    # dominio por defecto: secuencia de ORDER_INDEX
+    """
+    Devuelve la lista de categorías en el orden deseado para usarla en
+    encode(..., sort=<list>). NO usar alt.Sort(domain=...).
+    """
     if domain is None:
         domain = list(ORDER_INDEX.keys())
-    return alt.Sort(domain=domain)
+    # devolver lista simple (Vega-Lite v5 acepta lista en sort)
+    return list(domain)
 
 
 def chart_sparkline_cumprofit(cum_df: pd.DataFrame, height: int = 200) -> alt.Chart:
@@ -32,7 +37,9 @@ def chart_sparkline_cumprofit(cum_df: pd.DataFrame, height: int = 200) -> alt.Ch
     return (area + line).properties(width="container")
 
 
-def chart_last8_profit(pnl_df: pd.DataFrame, profits_series: pd.Series, last: int = 8, height: int = 200) -> alt.Chart:
+def chart_last8_profit(
+    pnl_df: pd.DataFrame, profits_series: pd.Series, last: int = 8, height: int = 200
+) -> alt.Chart:
     """
     Barras de los últimos N profits semanales. Respeta `height`.
     """
@@ -100,7 +107,6 @@ def chart_drawdown_area(bank_df: pd.DataFrame, height: int = 220) -> alt.Chart:
     df = bank_df.copy()
     df["week_label"] = df["week_label"].astype(str)
 
-    # drawdown = (peak - bankroll)
     peak = df["bankroll"].cummax()
     df["drawdown"] = (peak - df["bankroll"]).clip(lower=0)
 
