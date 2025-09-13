@@ -180,7 +180,7 @@ def kpis_from_pnl(df: pd.DataFrame):
 # --------- Carga de SCORES/RESULTADOS desde archivos de odds ---------
 def _candidate_odds_files(year: int):
     names = [
-        f"odds_season_{year}.csv",           # <--- tu nombre principal
+        f"odds_season_{year}.csv",           # <--- tu nombre principal (bootstrap)
         f"target_odds_{year}.csv",
         f"targets_odds_{year}.csv",
         "target_odds.csv",
@@ -188,20 +188,14 @@ def _candidate_odds_files(year: int):
         "historical_odds.csv",
     ]
     for d in ODDS_DIRS:
-        # nombres explícitos
         for n in names:
             p = d / n
             if p.exists(): yield p
-        # patrón genérico por si cambias nombres: incluye "odds" y año
         for p in d.glob(f"*odds*{year}*.csv"):
             yield p
 
 @st.cache_data
 def load_scores_table(year: int) -> pd.DataFrame:
-    """
-    Devuelve tabla con columnas: season, week, home_team, away_team, score_home, score_away, schedule_date, pair
-    para el año solicitado, combinando el/los archivos disponibles.
-    """
     frames = []
     seen = set()
     for p in _candidate_odds_files(year):
@@ -335,13 +329,15 @@ tab_overview, tab_portfolio, tab_bets = st.tabs(["Overview", "Portfolio", "Bets"
 
 # ---------- OVERVIEW ----------
 with tab_overview:
+    bets_week = pd.DataFrame()
     if stage == "in_season":
         bets_week = load_bets_this_week(season)
-        if not bets_week.empty:
-            st.subheader("This Week’s Bets")
-            cols = [c for c in ["week","week_label","schedule_date","side","team","opponent","ml","decimal_odds","model_prob","edge","ev","stake"] if c in bets_week.columns]
-            st.dataframe(bets_week[cols] if cols else bets_week, use_container_width=True)
-            st.divider()
+
+    if not bets_week.empty:
+        st.subheader("This Week’s Bets")
+        cols = [c for c in ["week","week_label","schedule_date","side","team","opponent","ml","decimal_odds","model_prob","edge","ev","stake"] if c in bets_week.columns]
+        st.dataframe(bets_week[cols] if cols else bets_week, use_container_width=True)
+        st.divider()
 
     st.subheader("Season Overview")
     if pnl.empty:
@@ -354,6 +350,10 @@ with tab_overview:
         k3.metric("Total Profit", f"${total_profit:,.2f}")
         k4.metric("Yield",        f"{yield_pct:.2f}%")
 
+        # Altura dinámica: si NO hay bets arriba, agrandamos
+        H_OV_MAIN = 280 if bets_week.empty else 200
+        H_OV_MINI = 230 if bets_week.empty else 200
+
         cum_df = add_week_order(pd.DataFrame({"week_label": pnl["week_label"], "cum_profit": profits.cumsum()}))
         y2min, y2max = float(cum_df["cum_profit"].min()), float(cum_df["cum_profit"].max())
         pad2 = max(5.0, (y2max - y2min) * 0.06)
@@ -363,7 +363,7 @@ with tab_overview:
                 x=alt.X("week_label:N", sort=None, title=""),
                 y=alt.Y("cum_profit:Q", title="Cumulative Profit ($)", scale=alt.Scale(domain=[y2min - pad2, y2max + pad2], zero=False, nice=False)),
                 tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("cum_profit:Q", title="Cum Profit", format="$.2f")],
-            ).properties(height=200, width="container")
+            ).properties(height=H_OV_MAIN, width="container")
         ) + alt.Chart(cum_df).mark_line().encode(x=alt.X("week_label:N", sort=None, title=""), y="cum_profit:Q")
 
         last8 = add_week_order(pd.DataFrame({"week_label": pnl["week_label"], "profit": profits}))
@@ -374,7 +374,7 @@ with tab_overview:
                 x=alt.X("week_label:N", sort=None, title=""),
                 y=alt.Y("profit:Q", title="Last 8 Weeks Profit ($)", scale=alt.Scale(zero=True)),
                 tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("profit:Q", title="Profit", format="$.2f")],
-            ).properties(height=200, width="container")
+            ).properties(height=H_OV_MINI, width="container")
         )
         cA, cB = st.columns(2)
         with cA: st.altair_chart(spark, use_container_width=True)
@@ -395,11 +395,18 @@ with tab_portfolio:
 
         bank_df = add_week_order(pnl[["week_label", "bankroll"]].dropna())
         prof_df = add_week_order(pd.DataFrame({"week_label": pnl["week_label"], "profit": profits, "stake": stakes}))
-        cum_df  = add_week_order(pd.DataFrame({"week_label": pnl["week_label"], "cum_profit": profits.cumsum()}))
         stake_df= add_week_order(pd.DataFrame({"week_label": pnl["week_label"], "stake": stakes}))
 
+        # === Max Drawdown (%)
+        dd_df = bank_df.copy()
+        if not dd_df.empty:
+            dd_df["rolling_max"] = dd_df["bankroll"].cummax()
+            dd_df["drawdown_%"]  = (dd_df["bankroll"] / dd_df["rolling_max"] - 1.0) * 100.0
+            dd_df = dd_df.drop(columns=["rolling_max"])
+
         H = 220
-        ymin, ymax = float(bank_df["bankroll"].min()), float(bank_df["bankroll"].max()); pad = max(10.0, (ymax - ymin) * 0.06)
+        ymin, ymax = float(bank_df["bankroll"].min()), float(bank_df["bankroll"].max())
+        pad = max(10.0, (ymax - ymin) * 0.06)
         bank_chart = alt.Chart(bank_df).mark_line(point=True).encode(
             x=alt.X("week_label:N", sort=None, title=""),
             y=alt.Y("bankroll:Q", title="Bankroll ($)", scale=alt.Scale(domain=[ymin - pad, ymax + pad], zero=False, nice=False)),
@@ -412,12 +419,16 @@ with tab_portfolio:
             tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("profit:Q", title="Profit", format="$.2f"), alt.Tooltip("stake:Q", title="Stake", format="$.2f")],
         ).properties(height=H, width="container")
 
-        y2min, y2max = float(cum_df["cum_profit"].min()), float(cum_df["cum_profit"].max()); pad2 = max(5.0, (y2max - y2min) * 0.06)
-        cum_chart = alt.Chart(cum_df).mark_line(point=True).encode(
-            x=alt.X("week_label:N", sort=None, title=""),
-            y=alt.Y("cum_profit:Q", title="Cumulative Profit ($)", scale=alt.Scale(domain=[y2min - pad2, y2max + pad2], zero=False, nice=False)),
-            tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("cum_profit:Q", title="Cum Profit", format="$.2f")],
-        ).properties(height=H, width="container")
+        if not dd_df.empty:
+            ymin2, ymax2 = float(dd_df["drawdown_%"].min()), float(dd_df["drawdown_%"].max())
+            pad2 = max(1.0, (ymax2 - ymin2) * 0.06)
+            dd_chart = alt.Chart(dd_df).mark_area(opacity=0.3).encode(
+                x=alt.X("week_label:N", sort=None, title=""),
+                y=alt.Y("drawdown_%:Q", title="Max Drawdown (%)", scale=alt.Scale(domain=[ymin2 - pad2, max(0, ymax2 + pad2)], zero=True, nice=True)),
+                tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("drawdown_%:Q", title="Drawdown", format=".1f")],
+            ).properties(height=H, width="container")
+        else:
+            dd_chart = alt.Chart(pd.DataFrame({"week_label":[],"drawdown_%":[]})).mark_area().encode(x="week_label:N", y="drawdown_%:Q").properties(height=H)
 
         stake_chart = alt.Chart(stake_df).mark_bar().encode(
             x=alt.X("week_label:N", sort=None, title=""),
@@ -428,34 +439,14 @@ with tab_portfolio:
         c1, c2 = st.columns(2); c3, c4 = st.columns(2)
         with c1: st.altair_chart(bank_chart, use_container_width=True)
         with c2: st.altair_chart(profit_chart, use_container_width=True)
-        with c3: st.altair_chart(cum_chart, use_container_width=True)
+        with c3: st.altair_chart(dd_chart, use_container_width=True)
         with c4: st.altair_chart(stake_chart, use_container_width=True)
 
-# ---------- BETS (tarjetas compactas con SCORE) ----------
-ESPN_SLUG = ESPN_SLUG  # alias local
-
-@st.cache_data(ttl=60*60*24)
-def get_logo_url(abbr: str) -> str | None:
-    if not abbr: return None
-    a = abbr.upper().strip()
-    local = LOGOS_DIR / f"{a}.png"
-    if local.exists(): return local.as_posix()
-    candidates = [
-        f"https://static.www.nfl.com/t_q-best/league/api/clubs/logos/{a}",
-        f"https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/{ESPN_SLUG.get(a, a.lower())}.png",
-        f"https://a.espncdn.com/i/teamlogos/nfl/500/{ESPN_SLUG.get(a, a.lower())}.png",
-    ]
-    for url in candidates:
-        try:
-            r = requests.head(url, timeout=2, allow_redirects=True)
-            if r.status_code == 200: return url
-        except Exception:
-            continue
-    return None
-
+# ---------- BETS (tarjetas compactas con SCORE en una sola línea, logos grandes)
 def bet_card(row: pd.Series):
-    team = norm_abbr(row.get("team", ""))
-    opp  = norm_abbr(row.get("opponent", ""))
+    # Equipos para el scoreboard: usa home/away si existen, sino team/opponent
+    htm = norm_abbr(row.get("home_team", "")) or norm_abbr(row.get("team", ""))
+    atm = norm_abbr(row.get("away_team", "")) or norm_abbr(row.get("opponent", ""))
     side = str(row.get("side", "")).title() if pd.notna(row.get("side")) else ""
     wl_profit = pd.to_numeric(row.get("profit"), errors="coerce")
     stake = pd.to_numeric(row.get("stake"), errors="coerce")
@@ -463,6 +454,7 @@ def bet_card(row: pd.Series):
     ml  = pd.to_numeric(row.get("ml"), errors="coerce")
     if pd.isna(ml) and pd.notna(dec): ml = decimal_to_american(dec)
 
+    # Estado
     if pd.isna(wl_profit): status_color, status_label = "#888888", "OPEN"
     elif wl_profit > 0:    status_color, status_label = "#1FA37C", "WIN"
     elif wl_profit < 0:    status_color, status_label = "#D64545", "LOSS"
@@ -471,16 +463,28 @@ def bet_card(row: pd.Series):
     wk = str(row.get("week_label", row.get("week", "")))
     date_txt = str(row.get("schedule_date", ""))[:10] if pd.notna(row.get("schedule_date")) else ""
 
-    # SCORE desde odds_season_YEAR.csv u otros
+    # SCORE
     sh = row.get("score_home", None); sa = row.get("score_away", None)
-    htm = norm_abbr(row.get("home_team","")); atm = norm_abbr(row.get("away_team",""))
-    score_txt = ""
-    if pd.notna(sh) and pd.notna(sa) and (htm or atm):
-        try: score_txt = f"{htm or 'HOME'} {int(sh)} — {atm or 'AWAY'} {int(sa)}"
-        except Exception: score_txt = ""
+    has_score = pd.notna(sh) and pd.notna(sa)
 
-    team_logo = get_logo_url(team)
-    opp_logo  = get_logo_url(opp)
+    # Logos (más grandes)
+    def logo_tag(team_abbr: str, fallback_bg: str = "#222"):
+        url = get_logo_url(team_abbr) if team_abbr else None
+        if url:
+            return f"<img src='{url}' width='36' height='36' style='object-fit:contain;'/>"
+        t = (team_abbr or "NA")[:3]
+        return f"<div style='width:36px;height:36px;border-radius:50%;background:{fallback_bg};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;'>{t}</div>"
+
+    left = logo_tag(htm, "#1f2937")
+    right = logo_tag(atm, "#374151")
+
+    score_html = ""
+    if has_score:
+        try:
+            score_html = f"<div style='font-weight:800;font-size:22px;letter-spacing:.5px;'>{int(sh)} — {int(sa)}</div>"
+        except Exception:
+            score_html = ""
+
     ml_txt    = f"{ml:+.0f}" if pd.notna(ml) else "—"
     stake_txt = f"${stake:,.2f}" if pd.notna(stake) else "—"
     prof_txt  = f"${wl_profit:,.2f}" if pd.notna(wl_profit) else "—"
@@ -491,6 +495,7 @@ def bet_card(row: pd.Series):
         background:linear-gradient(180deg, rgba(0,0,0,0.02), rgba(0,0,0,0.00));
         font-size:12.5px;
     ">
+      <!-- header -->
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div style="display:flex; align-items:center; gap:8px;">
           <div style="width:8px;height:8px;border-radius:50%;background:{status_color};"></div>
@@ -500,20 +505,23 @@ def bet_card(row: pd.Series):
         <div style="font-weight:700;color:{status_color}">{status_label}</div>
       </div>
 
-      <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
-        <div style="display:flex; align-items:center; gap:6px;">
-          {"<img src='"+team_logo+"' width='22' />" if team_logo else f"<div style='width:22px;height:22px;border-radius:50%;background:#222;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;'>{team[:3]}</div>"}
-          <div style="font-weight:600;">{team}</div>
-          <div style="opacity:.65;">({side})</div>
-          <div style="opacity:.5;">vs</div>
-          {"<img src='"+opp_logo+"' width='22' />" if opp_logo else f"<div style='width:22px;height:22px;border-radius:50%;background:#555;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;'>{opp[:3]}</div>"}
-          <div style="font-weight:600;">{opp}</div>
+      <!-- scoreboard line -->
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:10px;">
+        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+          {left}
+          <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{htm}<span style="opacity:.6; font-weight:600;">{(' • '+side) if side else ''}</span></div>
+        </div>
+        <div style="text-align:center; flex:1; min-width:120px;">
+          {score_html if score_html else "<div style='opacity:.6;font-weight:600;'>TBD</div>"}
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; min-width:0; justify-content:flex-end;">
+          <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:right;">{atm}</div>
+          {right}
         </div>
       </div>
 
-      {"<div style='margin-top:6px;opacity:.85;'>" + score_txt + "</div>" if score_txt else ""}
-
-      <div style="display:flex; gap:14px; margin-top:8px; flex-wrap:wrap;">
+      <!-- stats row -->
+      <div style="display:flex; gap:14px; margin-top:10px; flex-wrap:wrap;">
         <div><span style="opacity:.6;">Moneyline:</span> <strong>{ml_txt}</strong></div>
         <div><span style="opacity:.6;">Stake:</span> <strong>{stake_txt}</strong></div>
         <div><span style="opacity:.6;">Profit:</span> <strong style="color:{status_color};">{prof_txt}</strong></div>
@@ -534,7 +542,7 @@ with tab_bets:
             if "schedule_date" in view.columns: sort_cols.append("schedule_date")
             view = view.sort_values(sort_cols).drop(columns="__order")
 
-        # Tarjetas 4 por fila (sin "ver tabla completa")
+        # Tarjetas 4 por fila
         cards = list(view.itertuples(index=False))
         idx = 0
         cols_per_row = 4
