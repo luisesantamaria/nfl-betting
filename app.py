@@ -442,9 +442,8 @@ with tab_portfolio:
         with c3: st.altair_chart(dd_chart, use_container_width=True)
         with c4: st.altair_chart(stake_chart, use_container_width=True)
 
-# ---------- BETS (tarjetas compactas con SCORE en una sola línea, logos grandes)
 def bet_card(row: pd.Series):
-    # Equipos para el scoreboard: usa home/away si existen, sino team/opponent
+    # Equipos para el scoreboard: usa home/away si existen; si no, team/opponent
     htm = norm_abbr(row.get("home_team", "")) or norm_abbr(row.get("team", ""))
     atm = norm_abbr(row.get("away_team", "")) or norm_abbr(row.get("opponent", ""))
     side = str(row.get("side", "")).title() if pd.notna(row.get("side")) else ""
@@ -452,7 +451,8 @@ def bet_card(row: pd.Series):
     stake = pd.to_numeric(row.get("stake"), errors="coerce")
     dec = pd.to_numeric(row.get("decimal_odds"), errors="coerce")
     ml  = pd.to_numeric(row.get("ml"), errors="coerce")
-    if pd.isna(ml) and pd.notna(dec): ml = decimal_to_american(dec)
+    if pd.isna(ml) and pd.notna(dec):
+        ml = decimal_to_american(dec)
 
     # Estado
     if pd.isna(wl_profit): status_color, status_label = "#888888", "OPEN"
@@ -471,19 +471,27 @@ def bet_card(row: pd.Series):
     def logo_tag(team_abbr: str, fallback_bg: str = "#222"):
         url = get_logo_url(team_abbr) if team_abbr else None
         if url:
-            return f"<img src='{url}' width='36' height='36' style='object-fit:contain;'/>"
-        t = (team_abbr or "NA")[:3]
-        return f"<div style='width:36px;height:36px;border-radius:50%;background:{fallback_bg};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;'>{t}</div>"
+            # un poco más grandes para darle jerarquía
+            return f"<img src='{url}' width='44' height='44' style='object-fit:contain;'/>"
+        t = (team_abbr or 'NA')[:3]
+        return (
+            f"<div style='width:44px;height:44px;border-radius:50%;"
+            f"background:{fallback_bg};color:#fff;display:flex;align-items:center;"
+            f"justify-content:center;font-weight:800;'>{t}</div>"
+        )
 
-    left = logo_tag(htm, "#1f2937")
-    right = logo_tag(atm, "#374151")
+    left_logo  = logo_tag(htm, "#1f2937")
+    right_logo = logo_tag(atm, "#374151")
 
-    score_html = ""
-    if has_score:
-        try:
-            score_html = f"<div style='font-weight:800;font-size:22px;letter-spacing:.5px;'>{int(sh)} — {int(sa)}</div>"
-        except Exception:
-            score_html = ""
+    score_html = (
+        f"<div style='font-weight:900;font-size:26px;letter-spacing:.5px;'>"
+        f"{int(sh)} — {int(sa)}</div>"
+        if has_score else "<div style='opacity:.55;font-weight:700;'>TBD</div>"
+    )
+
+    # Texto pequeño debajo del scoreboard (nombres y side)
+    subline_left  = f"{htm}{(' • '+side) if side else ''}".strip()
+    subline_right = f"{atm}".strip()
 
     ml_txt    = f"{ml:+.0f}" if pd.notna(ml) else "—"
     stake_txt = f"${stake:,.2f}" if pd.notna(stake) else "—"
@@ -491,7 +499,7 @@ def bet_card(row: pd.Series):
 
     st.markdown(f"""
     <div style="
-        border:1px solid #e9e9e9;border-radius:12px;padding:10px; margin-bottom:8px;
+        border:1px solid #e9e9e9;border-radius:12px;padding:12px; margin-bottom:10px;
         background:linear-gradient(180deg, rgba(0,0,0,0.02), rgba(0,0,0,0.00));
         font-size:12.5px;
     ">
@@ -502,22 +510,27 @@ def bet_card(row: pd.Series):
           <div style="font-weight:600;">{wk}</div>
           <div style="opacity:.7;">{date_txt}</div>
         </div>
-        <div style="font-weight:700;color:{status_color}">{status_label}</div>
+        <div style="font-weight:800;color:{status_color}">{status_label}</div>
       </div>
 
-      <!-- scoreboard line -->
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:10px;">
-        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-          {left}
-          <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{htm}<span style="opacity:.6; font-weight:600;">{(' • '+side) if side else ''}</span></div>
+      <!-- scoreboard: logos + score centrado -->
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;">
+        <div style="width:44px; display:flex; align-items:center; justify-content:center;">
+          {left_logo}
         </div>
-        <div style="text-align:center; flex:1; min-width:120px;">
-          {score_html if score_html else "<div style='opacity:.6;font-weight:600;'>TBD</div>"}
+        <div style="flex:1; text-align:center;">
+          {score_html}
         </div>
-        <div style="display:flex; align-items:center; gap:8px; min-width:0; justify-content:flex-end;">
-          <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:right;">{atm}</div>
-          {right}
+        <div style="width:44px; display:flex; align-items:center; justify-content:center;">
+          {right_logo}
         </div>
+      </div>
+
+      <!-- subline (pequeño): nombres de equipos y side -->
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:6px;">
+        <div style="font-size:12px; opacity:.7; font-weight:600;">{subline_left}</div>
+        <div style="font-size:12px; opacity:.5; font-weight:700;">vs</div>
+        <div style="font-size:12px; opacity:.7; font-weight:600; text-align:right;">{subline_right}</div>
       </div>
 
       <!-- stats row -->
