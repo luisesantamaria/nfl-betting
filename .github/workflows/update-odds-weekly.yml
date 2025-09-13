@@ -1,0 +1,39 @@
+name: update-odds-weekly
+
+on:
+  workflow_dispatch: {}   # correrlo a mano cuando quieras (por ejemplo: hoy viernes)
+  schedule:
+    # Cada miércoles a las 18:00 UTC
+    # En CDMX normalmente 13:00 (horario de verano) o 12:00 (invierno)
+    - cron: "0 18 * * 3"
+
+jobs:
+  fetch_odds:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests pyarrow python-dateutil
+
+      - name: Fetch odds & scores → data/live/odds.csv
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          python scripts/fetch_odds.py --live-file "data/live/odds.csv"
+
+      - name: Commit & push data changes
+        run: |
+          git config user.name  "github-actions"
+          git config user.email "actions@github.com"
+          git add -A
+          git commit -m "chore(data): refresh data/live/odds.csv [skip ci]" || echo "no changes"
+          git push
