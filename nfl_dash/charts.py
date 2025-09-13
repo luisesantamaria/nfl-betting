@@ -1,66 +1,138 @@
 import altair as alt
 import pandas as pd
+from .utils import ORDER_INDEX
 
-def _pad_domain(series, min_pad, pct=0.06):
-    ymin, ymax = float(series.min()), float(series.max())
-    pad = max(min_pad, (ymax - ymin) * pct)
-    return [ymin - pad, ymax + pad]
 
-def chart_bankroll(df: pd.DataFrame, height=220):
-    dom = _pad_domain(df["bankroll"], 10.0)
-    return alt.Chart(df).mark_line(point=True).encode(
-        x=alt.X("week_label:N", sort=None, title=""),
-        y=alt.Y("bankroll:Q", title="Bankroll ($)", scale=alt.Scale(domain=dom, zero=False, nice=False)),
-        tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
-    ).properties(height=height, width="container")
+def _week_sort(domain=None):
+    # dominio por defecto: secuencia de ORDER_INDEX
+    if domain is None:
+        domain = list(ORDER_INDEX.keys())
+    return alt.Sort(domain=domain)
 
-def chart_profit_bars(df: pd.DataFrame, height=220):
-    return alt.Chart(df).mark_bar().encode(
-        x=alt.X("week_label:N", sort=None, title=""),
-        y=alt.Y("profit:Q", title="Profit ($)", scale=alt.Scale(zero=True)),
-        tooltip=[alt.Tooltip("week_label:N", title="Week"),
-                 alt.Tooltip("profit:Q", title="Profit", format="$.2f"),
-                 alt.Tooltip("stake:Q", title="Stake", format="$.2f")],
-    ).properties(height=height, width="container")
 
-def chart_drawdown_area(bank_df: pd.DataFrame, height=220):
-    if bank_df.empty:
-        return alt.Chart(pd.DataFrame({"week_label":[],"drawdown_%":[]})).mark_area().encode(
-            x="week_label:N", y="drawdown_%:Q").properties(height=height)
-    dd_df = bank_df.copy()
-    dd_df["rolling_max"] = dd_df["bankroll"].cummax()
-    dd_df["drawdown_%"]  = (dd_df["bankroll"] / dd_df["rolling_max"] - 1.0) * 100.0
-    dom = _pad_domain(dd_df["drawdown_%"], 1.0)
-    dom[1] = max(0, dom[1])  # techo al menos 0
-    return alt.Chart(dd_df).mark_area(opacity=0.3).encode(
-        x=alt.X("week_label:N", sort=None, title=""),
-        y=alt.Y("drawdown_%:Q", title="Max Drawdown (%)", scale=alt.Scale(domain=dom, zero=True, nice=True)),
-        tooltip=[alt.Tooltip("week_label:N", title="Week"),
-                 alt.Tooltip("drawdown_%:Q", title="Drawdown", format=".1f")],
-    ).properties(height=height, width="container")
+def chart_sparkline_cumprofit(cum_df: pd.DataFrame, height: int = 200) -> alt.Chart:
+    """
+    Línea/área de profit acumulado.
+    Espera columnas: week_label, cum_profit
+    """
+    df = cum_df.copy()
+    df["week_label"] = df["week_label"].astype(str)
 
-def chart_stake_bars(df: pd.DataFrame, height=220):
-    return alt.Chart(df).mark_bar().encode(
-        x=alt.X("week_label:N", sort=None, title=""),
-        y=alt.Y("stake:Q", title="Stake ($)", scale=alt.Scale(zero=True)),
-        tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("stake:Q", title="Stake", format="$.2f")],
-    ).properties(height=height, width="container")
+    base = alt.Chart(df, height=height).encode(
+        x=alt.X("week_label:N", sort=_week_sort(), title=None),
+        y=alt.Y("cum_profit:Q", title="Cumulative Profit ($)"),
+        tooltip=[
+            "week_label:N",
+            alt.Tooltip("cum_profit:Q", format="$.2f"),
+        ],
+    )
 
-def chart_sparkline_cumprofit(cum_df: pd.DataFrame, height=200):
-    dom = _pad_domain(cum_df["cum_profit"], 5.0)
-    area = alt.Chart(cum_df).mark_area(opacity=0.25).encode(
-        x=alt.X("week_label:N", sort=None, title=""),
-        y=alt.Y("cum_profit:Q", title="Cumulative Profit ($)", scale=alt.Scale(domain=dom, zero=False, nice=False)),
-        tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("cum_profit:Q", title="Cum Profit", format="$.2f")],
-    ).properties(height=height, width="container")
-    line = alt.Chart(cum_df).mark_line().encode(x=alt.X("week_label:N", sort=None, title=""), y="cum_profit:Q")
-    return area + line
+    area = base.mark_area(opacity=0.25)
+    line = base.mark_line(point=True)
+    return (area + line).properties(width="container")
 
-def chart_last8_profit(pnl_df: pd.DataFrame, profits: pd.Series, last=8, height=200):
-    last8 = pd.DataFrame({"week_label": pnl_df["week_label"], "profit": profits})
-    last8 = last8.tail(last) if len(last8) > last else last8
-    return alt.Chart(last8).mark_bar().encode(
-        x=alt.X("week_label:N", sort=None, title=""),
-        y=alt.Y("profit:Q", title="Last Weeks Profit ($)", scale=alt.Scale(zero=True)),
-        tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("profit:Q", title="Profit", format="$.2f")],
-    ).properties(height=height, width="container")
+
+def chart_last8_profit(pnl_df: pd.DataFrame, profits_series: pd.Series, last: int = 8, height: int = 200) -> alt.Chart:
+    """
+    Barras de los últimos N profits semanales. Respeta `height`.
+    """
+    df = pd.DataFrame(
+        {"week_label": pnl_df["week_label"].astype(str), "profit": profits_series.values}
+    ).copy()
+    df["__order"] = df["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+    df = df.sort_values(["__order"]).tail(last)
+
+    return (
+        alt.Chart(df, height=height)
+        .mark_bar()
+        .encode(
+            x=alt.X("week_label:N", sort=_week_sort(), title=None),
+            y=alt.Y("profit:Q", title="Last-Week Profit ($)"),
+            tooltip=["week_label:N", alt.Tooltip("profit:Q", format="$.2f")],
+        )
+        .properties(width="container")
+    )
+
+
+def chart_bankroll(bank_df: pd.DataFrame, height: int = 220) -> alt.Chart:
+    """
+    Línea de bankroll por semana. Columnas: week_label, bankroll
+    """
+    df = bank_df.copy()
+    df["week_label"] = df["week_label"].astype(str)
+
+    return (
+        alt.Chart(df, height=height)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("week_label:N", sort=_week_sort(), title=None),
+            y=alt.Y("bankroll:Q", title="Bankroll ($)"),
+            tooltip=["week_label:N", alt.Tooltip("bankroll:Q", format="$.2f")],
+        )
+        .properties(width="container")
+    )
+
+
+def chart_profit_bars(prof_df: pd.DataFrame, height: int = 220) -> alt.Chart:
+    """
+    Barras de profit semanal. Columnas: week_label, profit
+    """
+    df = prof_df[["week_label", "profit"]].copy()
+    df["week_label"] = df["week_label"].astype(str)
+
+    return (
+        alt.Chart(df, height=height)
+        .mark_bar()
+        .encode(
+            x=alt.X("week_label:N", sort=_week_sort(), title=None),
+            y=alt.Y("profit:Q", title="Weekly Profit ($)"),
+            tooltip=["week_label:N", alt.Tooltip("profit:Q", format="$.2f")],
+        )
+        .properties(width="container")
+    )
+
+
+def chart_drawdown_area(bank_df: pd.DataFrame, height: int = 220) -> alt.Chart:
+    """
+    Área de drawdown desde el máximo histórico del bankroll.
+    Columnas: week_label, bankroll
+    """
+    df = bank_df.copy()
+    df["week_label"] = df["week_label"].astype(str)
+
+    # drawdown = (peak - bankroll)
+    peak = df["bankroll"].cummax()
+    df["drawdown"] = (peak - df["bankroll"]).clip(lower=0)
+
+    return (
+        alt.Chart(df, height=height)
+        .mark_area(opacity=0.25)
+        .encode(
+            x=alt.X("week_label:N", sort=_week_sort(), title=None),
+            y=alt.Y("drawdown:Q", title="Drawdown ($)"),
+            tooltip=[
+                "week_label:N",
+                alt.Tooltip("drawdown:Q", format="$.2f"),
+            ],
+        )
+        .properties(width="container")
+    )
+
+
+def chart_stake_bars(stake_df: pd.DataFrame, height: int = 220) -> alt.Chart:
+    """
+    Barras de stake por semana. Columnas: week_label, stake
+    """
+    df = stake_df.copy()
+    df["week_label"] = df["week_label"].astype(str)
+
+    return (
+        alt.Chart(df, height=height)
+        .mark_bar()
+        .encode(
+            x=alt.X("week_label:N", sort=_week_sort(), title=None),
+            y=alt.Y("stake:Q", title="Stake ($)"),
+            tooltip=["week_label:N", alt.Tooltip("stake:Q", format="$.2f")],
+        )
+        .properties(width="container")
+    )
