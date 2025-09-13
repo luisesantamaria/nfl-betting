@@ -38,7 +38,7 @@ if not seasons:
 default_season = max(seasons)
 
 # Controla cuánto bajas el select para que se vea el label
-SPACER_PX = 50  # ajusta 12–24 si quieres más/menos separación
+SPACER_PX = 25  # ajusta 12–24 si quieres más/menos separación
 
 h_left, h_right = st.columns([0.66, 0.34], gap="large")
 with h_left:
