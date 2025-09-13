@@ -1,10 +1,9 @@
 name: update-odds-weekly
 
 on:
-  workflow_dispatch: {}   # correrlo a mano cuando quieras (por ejemplo: hoy viernes)
+  workflow_dispatch: {}   # lo puedes correr a mano cuando quieras
   schedule:
-    # Cada miércoles a las 18:00 UTC
-    # En CDMX normalmente 13:00 (horario de verano) o 12:00 (invierno)
+    # Miércoles 18:00 UTC (en CDMX suele ser 13:00 en verano / 12:00 en invierno)
     - cron: "0 18 * * 3"
 
 jobs:
@@ -24,16 +23,38 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas requests pyarrow python-dateutil
 
+      - name: Prepare folders
+        run: |
+          mkdir -p data/live
+
       - name: Fetch odds & scores → data/live/odds.csv
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
           python scripts/fetch_odds.py --live-file "data/live/odds.csv"
 
-      - name: Commit & push data changes
+      - name: Ensure live file exists (create empty headers if missing)
+        run: |
+          if [ ! -f data/live/odds.csv ]; then
+            echo "season,week,week_label,schedule_date,home_team,away_team,ml_home,ml_away,decimal_home,decimal_away,spread_home,spread_away,over_under_line,score_home,score_away,event_id" > data/live/odds.csv
+          fi
+
+      - name: Inspect file (debug)
+        run: |
+          ls -lah data/live || true
+          head -n 5 data/live/odds.csv || true
+
+      - name: Upload odds.csv as artifact (debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: odds-live
+          path: data/live/odds.csv
+
+      - name: Commit & push changes (force-add if ignored)
         run: |
           git config user.name  "github-actions"
           git config user.email "actions@github.com"
           git add -A
+          git add -f data/live/odds.csv
           git commit -m "chore(data): refresh data/live/odds.csv [skip ci]" || echo "no changes"
           git push
