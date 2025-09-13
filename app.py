@@ -15,21 +15,21 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# --- Oculta sidebar y reduce padding superior del contenedor
+# ---------------- CSS: oculta sidebar y compacta padding ----------------
 st.markdown(
     """
     <style>
     [data-testid="stSidebar"]{display:none!important;}
     [data-testid="collapsedControl"]{display:none!important;}
     .block-container{padding-top:0.8rem !important;}
-    /* compacta el select */
+    /* compacta el select (alto del control) */
     .compact-select > div[data-baseweb="select"] { min-height: 38px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ===================== HEADER (título + season en la misma fila) =====================
+# ===================== HEADER (título + season en misma fila) =====================
 seasons = list_available_seasons()
 if not seasons:
     st.error("No seasons found in data/processed/portfolio.")
@@ -37,7 +37,9 @@ if not seasons:
 
 default_season = max(seasons)
 
-# fila header
+# Controla cuánto bajas el select para que se vea el label
+SPACER_PX = 18  # ajusta 12–24 si quieres más/menos separación
+
 h_left, h_right = st.columns([0.66, 0.34], gap="large")
 with h_left:
     st.markdown(
@@ -45,19 +47,21 @@ with h_left:
         unsafe_allow_html=True,
     )
 with h_right:
-    # pequeño spacer para alinear verticalmente con el título
-    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-    season = st.selectbox(
-        "Season",
-        options=seasons,
-        index=seasons.index(default_season),
-        label_visibility="visible",
-        key="season_select",
-    )
+    # Spacer para que no se tape el label "Season"
+    st.markdown(f"<div style='height:{SPACER_PX}px'></div>", unsafe_allow_html=True)
+    # Caja compacta (clase solo para estilo, opcional)
+    with st.container():
+        season = st.selectbox(
+            "Season",
+            options=seasons,
+            index=seasons.index(default_season),
+            label_visibility="visible",
+            key="season_select",
+        )
 
 st.session_state["season"] = season
 
-# estado justo debajo del título, a la izquierda
+# ===================== ESTADO =====================
 pnl = load_pnl_weekly(season)
 stage = season_stage(season, pnl)
 status_map = {
