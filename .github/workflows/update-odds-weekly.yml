@@ -3,7 +3,7 @@ name: update-odds-weekly
 on:
   workflow_dispatch: {}   # lo puedes correr a mano cuando quieras
   schedule:
-    # Miércoles 18:00 UTC (en CDMX suele ser 13:00 en verano / 12:00 en invierno)
+    # Miércoles 18:00 UTC (CDMX suele ser 13:00 en verano / 12:00 en invierno)
     - cron: "0 18 * * 3"
 
 jobs:
@@ -23,34 +23,42 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas requests pyarrow python-dateutil
 
-      - name: Prepare folders
+      - name: Prepare folders & remove placeholder
         run: |
           mkdir -p data/live
+          # si existe un archivo llamado 'odds' sin extensión, elimínalo para no confundir
+          if [ -f data/live/odds ]; then rm -f data/live/odds; fi
 
       - name: Fetch odds & scores → data/live/odds.csv
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
+          set -o pipefail
           python scripts/fetch_odds.py --live-file "data/live/odds.csv"
+        continue-on-error: true   # si falla, seguimos para crear el CSV vacío
 
       - name: Ensure live file exists (create empty headers if missing)
+        if: always()
         run: |
           if [ ! -f data/live/odds.csv ]; then
             echo "season,week,week_label,schedule_date,home_team,away_team,ml_home,ml_away,decimal_home,decimal_away,spread_home,spread_away,over_under_line,score_home,score_away,event_id" > data/live/odds.csv
           fi
 
       - name: Inspect file (debug)
+        if: always()
         run: |
           ls -lah data/live || true
           head -n 5 data/live/odds.csv || true
 
       - name: Upload odds.csv as artifact (debug)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: odds-live
           path: data/live/odds.csv
 
       - name: Commit & push changes (force-add if ignored)
+        if: always()
         run: |
           git config user.name  "github-actions"
           git config user.email "actions@github.com"
