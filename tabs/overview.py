@@ -52,8 +52,8 @@ def render(season: int):
 
     # Alturas dinámicas: si NO hay bets, agrandamos ambos charts
     if bets_week.empty:
-        H_BANK = 320
-        H_PROF = 320
+        H_BANK = 400
+        H_PROF = 400
     else:
         H_BANK = 200
         H_PROF = 200
