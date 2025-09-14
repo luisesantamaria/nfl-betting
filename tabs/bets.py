@@ -1,6 +1,8 @@
+# tabs/bets.py
 import math
 import pandas as pd
 import streamlit as st
+
 from nfl_dash.data_io import load_ledger
 from nfl_dash.odds_scores import enrich_bets_with_scores
 from nfl_dash.utils import ORDER_INDEX
@@ -24,6 +26,9 @@ def render(season: int):
             sort_cols.append("schedule_date")
         view = view.sort_values(sort_cols).drop(columns="__order")
 
+    # import perezoso para evitar problemas de carga/caché
+    from nfl_dash.components import bet_card as render_bet_card
+
     cards = list(view.itertuples(index=False))
     idx = 0
     cols_per_row = 4
@@ -33,5 +38,5 @@ def render(season: int):
         for j in range(cols_per_row):
             if idx < len(cards):
                 with col_objs[j]:
-                    bet_card(pd.Series(cards[idx]._asdict()))
+                    render_bet_card(pd.Series(cards[idx]._asdict()))
                 idx += 1
