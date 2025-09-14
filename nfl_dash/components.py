@@ -9,7 +9,8 @@ try:
 except Exception:
     _get_logo_url = None
 
-from .utils import norm_abbr, decimal_to_american
+from .utils import norm_abbr
+
 
 def get_logo_url(team_abbr: str) -> str | None:
     if _get_logo_url:
@@ -18,6 +19,19 @@ def get_logo_url(team_abbr: str) -> str | None:
         except Exception:
             return None
     return None
+
+
+def _decimal_to_american(dec) -> float | None:
+    try:
+        x = float(dec)
+    except Exception:
+        return None
+    if pd.isna(x) or x <= 1.0:
+        return None
+    if x >= 2.0:
+        return round((x - 1.0) * 100)
+    return round(-100.0 / (x - 1.0))
+
 
 def bet_card(row: pd.Series):
     htm = norm_abbr(row.get("home_team", "")) or norm_abbr(row.get("team", ""))
@@ -29,12 +43,16 @@ def bet_card(row: pd.Series):
     dec       = pd.to_numeric(row.get("decimal_odds"), errors="coerce")
     ml        = pd.to_numeric(row.get("ml"), errors="coerce")
     if pd.isna(ml) and pd.notna(dec):
-        ml = decimal_to_american(dec)
+        ml = _decimal_to_american(dec)
 
-    if pd.isna(wl_profit): status_color, status_label = "#888888", "OPEN"
-    elif wl_profit > 0:    status_color, status_label = "#1FA37C", "WIN"
-    elif wl_profit < 0:    status_color, status_label = "#D64545", "LOSS"
-    else:                  status_color, status_label = "#8884D8", "PUSH"
+    if pd.isna(wl_profit):
+        status_color, status_label = "#888888", "OPEN"
+    elif wl_profit > 0:
+        status_color, status_label = "#1FA37C", "WIN"
+    elif wl_profit < 0:
+        status_color, status_label = "#D64545", "LOSS"
+    else:
+        status_color, status_label = "#8884D8", "PUSH"
 
     wk = str(row.get("week_label", row.get("week", "")))
     date_txt = str(row.get("schedule_date", ""))[:10] if pd.notna(row.get("schedule_date")) else ""
