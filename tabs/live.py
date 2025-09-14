@@ -12,56 +12,74 @@ DAY_ORDER = ["Thursday", "Saturday", "Sunday", "Monday"]
 SUN_WINDOWS = ["Sun 1:00 PM", "Sun 4:05 PM", "Sun 4:25 PM", "Sun 8:20 PM", "Sun Other"]
 
 
-# ---------------- Semana actual ----------------
-def _espn_current_week(season: int) -> int | None:
+# ---------------- Semana actual (detector + contexto) ----------------
+def _espn_current_week_number() -> int | None:
     url = "https://site.api.espn.com/apis/v2/sports/football/nfl/scoreboard"
     try:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         wk = (r.json().get("week") or {}).get("number")
-        if isinstance(wk, int) and 1 <= wk <= 22:
-            return wk
+        return int(wk) if isinstance(wk, int) else None
     except Exception:
-        pass
-    return None
+        return None
 
 
 def _tuesday_anchor_et(ts_et: pd.Timestamp) -> pd.Timestamp:
     ts_et = ts_et.tz_localize("US/Eastern") if ts_et.tz is None else ts_et.tz_convert("US/Eastern")
-    # Mon=0...Sun=6 ; Tuesday=1
+    # Monday=0 ... Sunday=6 ; Tuesday=1
     days_since_tue = (ts_et.weekday() - 1) % 7
     return (ts_et - pd.Timedelta(days=days_since_tue)).normalize()
 
 
-def _guess_week_by_rules(season: int) -> int:
+def _guess_week_by_rules(season: int) -> tuple[int, dict]:
     rules = SEASON_RULES.get(int(season), {})
     rs = rules.get("regular_start")
+    now_et = pd.Timestamp.now(tz="US/Eastern")
     if not rs:
-        return 1
+        return 1, {"reason": "fallback:no_rules", "now_et": now_et, "anchor_tue": None}
+
     rs_utc = pd.Timestamp(rs)
     rs_utc = rs_utc.tz_localize("UTC") if rs_utc.tz is None else rs_utc
     week1_tue = _tuesday_anchor_et(rs_utc.tz_convert("US/Eastern"))
-    now_et = pd.Timestamp.now(tz="US/Eastern")
     if now_et < week1_tue:
-        return 1
+        return 1, {"reason": "rules:pre-week1", "now_et": now_et, "anchor_tue": week1_tue}
+
     delta_days = (now_et - week1_tue).days
-    return int(min(22, max(1, delta_days // 7 + 1)))
+    wk = int(min(22, max(1, delta_days // 7 + 1)))
+    return wk, {"reason": "rules:tuesday-cutoff", "now_et": now_et, "anchor_tue": week1_tue}
 
 
-def _auto_week(season: int) -> int:
-    return _espn_current_week(season) or _guess_week_by_rules(season)
-
-
-def _pick_week_and_fetch(season: int):
-    w = _auto_week(season)
-    for cand in [w, min(22, w + 1), max(1, w - 1)]:
-        df = fetch_espn_scoreboard_df(int(season), int(cand))
+def _choose_week(season: int) -> tuple[int, pd.DataFrame, dict]:
+    # 1) ESPN "current" week
+    espn_wk = _espn_current_week_number()
+    meta: dict = {}
+    if espn_wk is not None:
+        df = fetch_espn_scoreboard_df(int(season), int(espn_wk))
         if not df.empty:
-            return cand, df
-    return w, pd.DataFrame()
+            now_et = pd.Timestamp.now(tz="US/Eastern")
+            meta = {"reason": "espn", "now_et": now_et, "anchor_tue": None}
+            return espn_wk, df, meta
+
+    # 2) Fallback por reglas (martes 00:00 ET)
+    wk_rules, info = _guess_week_by_rules(season)
+    df = fetch_espn_scoreboard_df(int(season), int(wk_rules))
+    if not df.empty:
+        return wk_rules, df, info
+
+    # 3) Por si acaso, prueba semana vecina
+    for cand in [wk_rules + 1, wk_rules - 1]:
+        if 1 <= cand <= 22:
+            df = fetch_espn_scoreboard_df(int(season), int(cand))
+            if not df.empty:
+                info2 = dict(info)
+                info2["reason"] = f"{info.get('reason','rules')}+neighbor({cand})"
+                return cand, df, info2
+
+    # Nada encontrado
+    return wk_rules, pd.DataFrame(), info
 
 
-# ---------------- Render helpers ----------------
+# ---------------- Render helpers (cards/agrupación) ----------------
 def _bucket_day(ts: pd.Timestamp) -> str:
     if pd.isna(ts):
         return "TBD"
@@ -72,7 +90,7 @@ def _sun_window(ts: pd.Timestamp) -> str:
     if pd.isna(ts):
         return "Sun Other"
     t = ts.tz_convert("US/Eastern")
-    if t.weekday() != 6:  # Sunday
+    if t.weekday() != 6:  # Domingo
         return ""
     h, m = t.hour, t.minute
     if h == 13:
@@ -157,9 +175,18 @@ def _game_card(row: pd.Series):
 def render(season: int):
     st.subheader("Live")
 
-    week, df = _pick_week_and_fetch(season)
+    week, df, meta = _choose_week(season)
+    # Banner de contexto (fecha actual ET, semana y razón)
+    now_et = meta.get("now_et") or pd.Timestamp.now(tz="US/Eastern")
+    anchor = meta.get("anchor_tue")
+    when_txt = now_et.strftime("%a %b %d, %I:%M %p ET")
+    anchor_txt = anchor.strftime("%a %b %d") if isinstance(anchor, pd.Timestamp) else "—"
+    reason = meta.get("reason", "unknown")
+
+    st.caption(f"Auto-detected **Week {week}** • Now: **{when_txt}** • Tue cutoff anchor: **{anchor_txt}** • Source: **{reason}**")
+
     if df.empty:
-        st.caption("No games found for this week.")
+        st.info("No games found for this week.")
         return
 
     # refresco amable si hay LIVE
@@ -169,8 +196,6 @@ def render(season: int):
             st_autorefresh(interval=60_000, key=f"live_auto_{season}_{week}")
         except Exception:
             pass
-
-    st.caption(f"Showing Week {week} (auto-detected, Tue 00:00 ET cutoff)")
 
     df = df.copy()
     df["bucket"] = df["start_time"].apply(_bucket_day)
