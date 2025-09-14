@@ -1,70 +1,112 @@
-from datetime import datetime, timedelta, timezone
+import os
 import pandas as pd
-from .config import SEASON_RULES
 
 ORDER_LABELS = [f"Week {i}" for i in range(1, 19)] + ["Wild Card", "Divisional", "Conference", "Super Bowl"]
-ORDER_INDEX  = {lab: i for i, lab in enumerate(ORDER_LABELS)}
-PLAYOFF_LABEL_TO_NUM = {"Wild Card":19,"Divisional":20,"Conference":21,"Super Bowl":22}
+ORDER_INDEX = {lab: i for i, lab in enumerate(ORDER_LABELS)}
 
-TEAM_FIX = {
-    "STL":"LA","LAR":"LA","LA":"LA","SD":"LAC","SDG":"LAC","OAK":"LV","LVR":"LV","WSH":"WAS","JAC":"JAX",
-    "GNB":"GB","KAN":"KC","NWE":"NE","NOR":"NO","SFO":"SF","TAM":"TB",
+TEAM_LOGO = {
+    "ARI": "assets/logos/ARI.png", "ATL": "assets/logos/ATL.png", "BAL": "assets/logos/BAL.png",
+    "BUF": "assets/logos/BUF.png", "CAR": "assets/logos/CAR.png", "CHI": "assets/logos/CHI.png",
+    "CIN": "assets/logos/CIN.png", "CLE": "assets/logos/CLE.png", "DAL": "assets/logos/DAL.png",
+    "DEN": "assets/logos/DEN.png", "DET": "assets/logos/DET.png", "GB": "assets/logos/GB.png",
+    "HOU": "assets/logos/HOU.png", "IND": "assets/logos/IND.png", "JAX": "assets/logos/JAX.png",
+    "KC": "assets/logos/KC.png", "LA": "assets/logos/LA.png", "LAC": "assets/logos/LAC.png",
+    "LV": "assets/logos/LV.png", "MIA": "assets/logos/MIA.png", "MIN": "assets/logos/MIN.png",
+    "NE": "assets/logos/NE.png", "NO": "assets/logos/NO.png", "NYG": "assets/logos/NYG.png",
+    "NYJ": "assets/logos/NYJ.png", "PHI": "assets/logos/PHI.png", "PIT": "assets/logos/PIT.png",
+    "SEA": "assets/logos/SEA.png", "SF": "assets/logos/SF.png", "TB": "assets/logos/TB.png",
+    "TEN": "assets/logos/TEN.png", "WAS": "assets/logos/WAS.png",
 }
 
-def norm_abbr(s: str) -> str:
-    if not isinstance(s, str): return ""
-    s = s.strip().upper()
-    return TEAM_FIX.get(s, s)
+TEAM_FIX = {"STL": "LA", "LAR": "LA", "SD": "LAC", "SDG": "LAC", "OAK": "LV", "LVR": "LV", "WSH": "WAS", "JAC": "JAX"}
 
-def add_week_order(df: pd.DataFrame) -> pd.DataFrame:
-    x = df.copy()
-    x["week_label"] = x["week_label"].astype(str)
-    x["__order"] = x["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
-    x = x.sort_values("__order").drop(columns="__order")
-    x["week_label"] = pd.Categorical(x["week_label"], categories=ORDER_LABELS, ordered=True)
-    return x
+def week_sort_key(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "week_label" in out.columns:
+        out["week_label"] = out["week_label"].astype(str)
+    elif "week" in out.columns:
+        out["week_label"] = out["week"].apply(week_label_from_num).astype(str)
+    else:
+        out["week_label"] = "Week 999"
+    out["week_order"] = out["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+    return out
 
-def week_label_to_num(val) -> int:
-    if pd.isna(val): return 999
-    s = str(val)
-    if s.startswith("Week "):
-        try: return int(s.split(" ")[1])
-        except: return 999
-    return PLAYOFF_LABEL_TO_NUM.get(s, 999)
+def week_label_from_num(n: int) -> str:
+    n = int(n)
+    if 1 <= n <= 18:
+        return f"Week {n}"
+    return {19: "Wild Card", 20: "Divisional", 21: "Conference", 22: "Super Bowl"}.get(n, f"Week {n}")
 
-def kpis_from_pnl(df: pd.DataFrame):
-    profits = pd.to_numeric(df.get("profit"), errors="coerce").fillna(0.0)
-    stakes  = pd.to_numeric(df.get("stake"),  errors="coerce").fillna(0.0)
-    banks   = pd.to_numeric(df.get("bankroll"), errors="coerce")
-    first_bankroll   = float(banks.iloc[0]); first_profit = float(profits.iloc[0])
-    initial_bankroll = float(first_bankroll - first_profit)
-    final_bankroll   = float(banks.iloc[-1])
-    total_profit     = float(profits.sum())
-    total_stake      = float(stakes.sum())
-    yield_pct        = (total_profit / total_stake * 100.0) if total_stake > 0 else 0.0
-    return initial_bankroll, final_bankroll, total_profit, total_stake, yield_pct, profits, stakes
+def path_bets(season: int) -> str:
+    return f"data/archive/season={season}/bets.csv"
 
-def american_to_decimal(v):
-    try: v = float(v)
-    except: return float("nan")
-    return 1 + (100/abs(v) if v < 0 else v/100)
+def path_pnl(season: int) -> str:
+    return f"data/archive/season={season}/pnl.csv"
 
-def decimal_to_american(d):
-    try: d = float(d)
-    except: return float("nan")
-    return round((d - 1) * 100, 0) if d >= 2.0 else round(-100 / (d - 1), 0)
+def path_stats(season: int) -> str:
+    return f"data/archive/season={season}/stats.csv"
 
-def season_stage(year: int, pnl_df: pd.DataFrame) -> str:
-    rule = SEASON_RULES.get(year, {})
-    now = datetime.now(timezone.utc)
-    if not pnl_df.empty:
-        labels = set(map(str, pnl_df["week_label"].astype(str).unique()))
-        if "Super Bowl" in labels or "Conference" in labels:
-            return "ended"
-    start = datetime.fromisoformat(rule.get("season_start", f"{year}-09-05")).replace(tzinfo=timezone.utc)
-    end   = datetime.fromisoformat(rule.get("season_end",   f"{year+1}-02-12")).replace(tzinfo=timezone.utc)
-    activate_from = start - timedelta(days=int(rule.get("activate_days_before", 0)))
-    if now < activate_from: return "locked"
-    if now < start: return "preseason"
-    if now <= end: return "in_season"
-    return "ended"
+def path_odds_archive(season: int) -> str:
+    return f"data/archive/season={season}/odds.csv"
+
+def path_odds_live() -> str:
+    return "data/live/odds.csv"
+
+def load_csv_safe(path: str, parse_dates=None) -> pd.DataFrame:
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    return pd.read_csv(path, low_memory=False, parse_dates=parse_dates or [])
+
+def load_bets(season: int) -> pd.DataFrame:
+    df = load_csv_safe(path_bets(season))
+    if df.empty:
+        return df
+    for c in ("schedule_date",):
+        if c in df.columns:
+            df[c] = pd.to_datetime(df[c], errors="coerce", utc=True)
+    if "team" in df.columns:
+        df["team"] = df["team"].astype(str).str.upper().str.strip().map(lambda x: TEAM_FIX.get(x, x))
+    if "opponent" in df.columns:
+        df["opponent"] = df["opponent"].astype(str).str.upper().str.strip().map(lambda x: TEAM_FIX.get(x, x))
+    if "week_label" in df.columns:
+        df["week_label"] = df["week_label"].astype(str)
+    num_cols = ["decimal_odds", "model_prob", "edge", "ev", "stake", "profit"]
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+def load_pnl(season: int) -> pd.DataFrame:
+    df = load_csv_safe(path_pnl(season))
+    if df.empty:
+        return df
+    if "week_label" in df.columns:
+        df["week_label"] = df["week_label"].astype(str)
+    for c in ("profit", "stake", "bankroll"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+def load_scores_for_bets(season: int) -> pd.DataFrame:
+    arch = load_csv_safe(path_odds_archive(season), parse_dates=["schedule_date"])
+    if arch.empty:
+        live = load_csv_safe(path_odds_live(), parse_dates=["schedule_date"])
+        base = live
+    else:
+        base = arch
+    if base.empty:
+        return base
+    keep = [c for c in [
+        "season", "week", "week_label", "schedule_date",
+        "home_team", "away_team", "score_home", "score_away"
+    ] if c in base.columns]
+    df = base[keep].copy()
+    for c in ("home_team", "away_team"):
+        if c in df.columns:
+            df[c] = df[c].astype(str).str.upper().str.strip().map(lambda x: TEAM_FIX.get(x, x))
+    return df
+
+def team_logo(team: str) -> str:
+    t = str(team).upper().strip()
+    t = TEAM_FIX.get(t, t)
+    return TEAM_LOGO.get(t, "")
