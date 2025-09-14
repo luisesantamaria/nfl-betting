@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-# scripts/fetch_odds.py
-#
-# Descarga odds (The Odds API) y mantiene data/live/odds.csv
-# - API key desde env ODDS_API_KEY (Secrets)
-# - markets: h2h,spreads,totals
-# - Dedup por event_id
-# - Infere season/week/week_label (Week1 = Thu después de Labor Day)
-# - Filtra por la "semana actual" por defecto (para evitar incluir la próxima semana)
-# - Sin columnas de scores en odds.csv (scores se unirán en otro pipeline)
-
 import os
 import sys
 import argparse
@@ -21,7 +10,6 @@ import requests
 
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/{sport}/odds"
 
-# ---------------------- util cuotas ----------------------
 
 def american_to_decimal(m):
     if m is None or (isinstance(m, float) and math.isnan(m)):
@@ -46,13 +34,11 @@ def best_decimal(prices):
     clean = [c for c in clean if not (isinstance(c, float) and math.isnan(c))]
     return max(clean) if clean else np.nan
 
-# ---------------------- fetch/parse ----------------------
-
 def fetch_events(api_key: str, sport: str, regions: str, markets: str) -> list:
     params = {
         "apiKey": api_key,
         "regions": regions,
-        "markets": markets,           # "h2h,spreads,totals"
+        "markets": markets,          
         "oddsFormat": "american",
         "dateFormat": "iso",
     }
@@ -92,10 +78,12 @@ def parse_rows(events: list, want_markets: set) -> pd.DataFrame:
                 if k == "h2h":
                     for oc in mk.get("outcomes", []) or []:
                         name, price = oc.get("name"), oc.get("price")
-                        if not name: 
+                        if not name:
                             continue
-                        if name.strip() == home: ml_home_prices.append(price)
-                        elif name.strip() == away: ml_away_prices.append(price)
+                        if name.strip() == home:
+                            ml_home_prices.append(price)
+                        elif name.strip() == away:
+                            ml_away_prices.append(price)
 
                 elif k == "spreads":
                     for oc in mk.get("outcomes", []) or []:
@@ -113,8 +101,10 @@ def parse_rows(events: list, want_markets: set) -> pd.DataFrame:
                     for oc in mk.get("outcomes", []) or []:
                         point = oc.get("point")
                         if point is not None and pd.isna(total_line):
-                            try: total_line = float(point)
-                            except Exception: pass
+                            try:
+                                total_line = float(point)
+                            except Exception:
+                                pass
 
         dec_home = best_decimal(ml_home_prices)
         dec_away = best_decimal(ml_away_prices)
@@ -137,8 +127,6 @@ def parse_rows(events: list, want_markets: set) -> pd.DataFrame:
         ))
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
-
-# ---------------------- season/week infer ----------------------
 
 def compute_season_from_date(ts_utc: pd.Timestamp) -> int:
     """Ene–Feb pertenecen a la temporada del año previo; Mar–Dic al mismo año."""
@@ -176,13 +164,16 @@ def infer_week_fields(ts_utc: pd.Timestamp):
 
 def current_season_week(now_utc: datetime | None = None):
     if now_utc is None:
-        now_utc = datetime.now(timezone.utc)
-    ts = pd.Timestamp(now_utc, tz="UTC")
+        now_utc = datetime.now(timezone.utc)  
+    ts = pd.Timestamp(now_utc)            
+    if ts.tz is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
     season = compute_season_from_date(ts)
     w, lbl = infer_week_fields(ts)
     return season, w, lbl
 
-# ---------------------- main ----------------------
 
 def main():
     ap = argparse.ArgumentParser()
@@ -190,7 +181,6 @@ def main():
     ap.add_argument("--sport", type=str, default="americanfootball_nfl")
     ap.add_argument("--regions", type=str, default="us")
     ap.add_argument("--markets", type=str, default="h2h,spreads,totals")
-    # Filtros de semana:
     ap.add_argument("--only-current-week", action="store_true", default=True,
                     help="Conservar únicamente la semana actual en base a la fecha de ejecución.")
     ap.add_argument("--season", type=int, default=None, help="Override de season (opcional).")
@@ -223,10 +213,9 @@ def main():
         weeks = parsed["schedule_date"].apply(infer_week_fields)
         parsed["week"] = [w for (w, lbl) in weeks]
         parsed["week_label"] = [lbl for (w, lbl) in weeks]
-        parsed = parsed[parsed["week"].notna()]  # filtra pre/indef
+        parsed = parsed[parsed["week"].notna()] 
         parsed = parsed.reindex(columns=col_order)
 
-    # Carga previo
     live_path = args.live_file
     os.makedirs(os.path.dirname(live_path), exist_ok=True)
     if os.path.exists(live_path):
@@ -238,9 +227,11 @@ def main():
         prev = pd.DataFrame(columns=col_order)
     prev = prev.reindex(columns=col_order)
 
-    combined = pd.concat([prev, parsed], ignore_index=True)
+    if parsed.empty:
+        combined = prev.copy()
+    else:
+        combined = pd.concat([prev, parsed], ignore_index=True)
 
-    # Completar week/label faltantes en histórico
     if "schedule_date" in combined.columns:
         combined["schedule_date"] = pd.to_datetime(combined["schedule_date"], errors="coerce", utc=True)
         mask = combined["week"].isna() & combined["schedule_date"].notna()
@@ -249,8 +240,6 @@ def main():
             combined.loc[mask, "week"] = [w for (w, lbl) in w2]
             combined.loc[mask, "week_label"] = [lbl for (w, lbl) in w2]
 
-    # ---------- FILTRO DE SEMANA ----------
-    # Por defecto, dejamos SOLO la semana "actual" (al momento de correr).
     cur_season, cur_week, cur_label = current_season_week()
     print(f"[odds] now → season={cur_season}, week={cur_week} ({cur_label})")
     target_season = args.season if args.season is not None else cur_season
@@ -260,9 +249,7 @@ def main():
         before = len(combined)
         combined = combined[(combined["season"] == target_season) & (combined["week"] == target_week)]
         print(f"[odds] week-filter {target_season}/{target_week}: {before} → {len(combined)} rows")
-    # --------------------------------------
 
-    # Orden / de-dup
     if "event_id" in combined.columns and combined["event_id"].notna().any():
         combined = combined.drop_duplicates(subset=["event_id"], keep="last")
     else:
