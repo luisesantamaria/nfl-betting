@@ -1,24 +1,7 @@
 import streamlit as st
 import pandas as pd
+from .logos import get_logo_url
 from .utils import norm_abbr, decimal_to_american
-
-# Abreviaturas válidas (después de norm_abbr)
-_VALID_ABBR = {
-    "ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB",
-    "HOU","IND","JAX","KC","LV","LAC","LAR","MIA","MIN","NE","NO","NYG",
-    "NYJ","PHI","PIT","SEA","SF","TB","TEN","WSH"
-}
-
-# Algunos hosts de ESPN usan minúsculas por abbr
-def _slug(abbr: str) -> str:
-    return abbr.lower()
-
-def get_logo_url(team_abbr: str) -> str | None:
-    a = norm_abbr(team_abbr)
-    if not a or a not in _VALID_ABBR:
-        return None
-    # ESPN 500px transparent PNGs por abreviatura (funciona para los 32 equipos)
-    return f"https://a.espncdn.com/i/teamlogos/nfl/500/{_slug(a)}.png"
 
 def bet_card(row: pd.Series):
     htm = norm_abbr(row.get("home_team", "")) or norm_abbr(row.get("team", ""))
@@ -43,19 +26,19 @@ def bet_card(row: pd.Series):
     sh = row.get("score_home", None); sa = row.get("score_away", None)
     has_score = pd.notna(sh) and pd.notna(sa)
 
-    def logo_tag(team_abbr: str, fallback_bg: str = "#222"):
+    def logo_tag(team_abbr: str, fallback_bg: str = "#222", size: int = 44):
         url = get_logo_url(team_abbr) if team_abbr else None
         if url:
-            return f"<img src='{url}' width='44' height='44' style='object-fit:contain;'/>"
+            return f"<img src='{url}' width='{size}' height='{size}' style='object-fit:contain;'/>"
         t = (team_abbr or 'NA')[:3]
         return (
-            f"<div style='width:44px;height:44px;border-radius:50%;"
+            f"<div style='width:{size}px;height:{size}px;border-radius:50%;"
             f"background:{fallback_bg};color:#fff;display:flex;align-items:center;"
             f"justify-content:center;font-weight:800;'>{t}</div>"
         )
 
-    left_logo  = logo_tag(htm, "#1f2937")
-    right_logo = logo_tag(atm, "#374151")
+    left_logo  = logo_tag(htm, "#1f2937", 44)
+    right_logo = logo_tag(atm, "#374151", 44)
 
     score_html = (
         f"<div style='font-weight:900;font-size:26px;letter-spacing:.5px;'>{int(sh)} — {int(sa)}</div>"
@@ -106,6 +89,80 @@ def bet_card(row: pd.Series):
         <div><span style="opacity:.6;">Moneyline:</span> <strong>{ml_txt}</strong></div>
         <div><span style="opacity:.6;">Stake:</span> <strong>{stake_txt}</strong></div>
         <div><span style="opacity:.6;">Profit:</span> <strong style="color:{status_color};">{prof_txt}</strong></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def game_card(row: pd.Series):
+    home = row.get("home_team", "")
+    away = row.get("away_team", "")
+    hs   = row.get("home_score", None)
+    as_  = row.get("away_score", None)
+    state = str(row.get("state","")).lower()
+    short = str(row.get("short",""))
+    start = row.get("start_time", "")
+
+    live = (state == "in")
+    final = (state == "post")
+    if live:
+        color = "#E11D48"
+        label = "LIVE"
+    elif final:
+        color = "#10B981"
+        label = "FINAL"
+    else:
+        color = "#6B7280"
+        label = short if short else "SCHEDULED"
+
+    def logo_tag(name: str, fallback_bg="#222", size: int = 50):
+        url = get_logo_url(name) if name else None
+        if url:
+            return f"<img src='{url}' width='{size}' height='{size}' style='object-fit:contain;'/>"
+        t = (name or 'NA')[:3]
+        return (
+            f"<div style='width:{size}px;height:{size}px;border-radius:50%;"
+            f"background:{fallback_bg};color:#fff;display:flex;align-items:center;"
+            f"justify-content:center;font-weight:800;'>{t}</div>"
+        )
+
+    left_logo  = logo_tag(home, "#1f2937", 50)
+    right_logo = logo_tag(away, "#374151", 50)
+
+    has_score = pd.notna(hs) and pd.notna(as_)
+    score_html = (
+        f"<div style='font-weight:900;font-size:28px;letter-spacing:.5px;'>{int(hs)} — {int(as_)}</div>"
+        if has_score else "<div style='opacity:.55;font-weight:700;'>—</div>"
+    )
+
+    st.markdown(f"""
+    <div style="
+        border:1px solid #ececec;border-radius:12px;padding:14px; margin-bottom:12px;
+        background:linear-gradient(180deg, rgba(0,0,0,0.02), rgba(0,0,0,0));
+        font-size:13px;
+    ">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div style="width:8px;height:8px;border-radius:50%;background:{color};"></div>
+          <div style="font-weight:700;">{home} vs {away}</div>
+        </div>
+        <div style="font-weight:800;color:{color}">{label}</div>
+      </div>
+
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:12px;">
+        <div style="width:54px; display:flex; align-items:center; justify-content:center;">
+          {left_logo}
+        </div>
+        <div style="flex:1; text-align:center;">
+          {score_html}
+        </div>
+        <div style="width:54px; display:flex; align-items:center; justify-content:center;">
+          {right_logo}
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:center; justify-content:center; margin-top:8px;">
+        <div style="font-size:12px; opacity:.7; font-weight:600;">{short}</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
