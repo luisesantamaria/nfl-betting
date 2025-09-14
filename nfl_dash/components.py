@@ -1,145 +1,111 @@
-# nfl_dash/logos.py
-from __future__ import annotations
-import re
+import streamlit as st
+import pandas as pd
+from .utils import norm_abbr, decimal_to_american
 
-# Base ESPN
-_BASE = "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/{slug}.png"
-
-# Normaliza un token (quita espacios, puntos y guiones; uppercase)
-def _norm_token(s: str) -> str:
-    if not s:
-        return ""
-    s = str(s)
-    s = re.sub(r"[\s\.\-_/]+", "", s)  # quita espaciado y separadores
-    return s.upper()
-
-# Slugs oficiales ESPN por equipo
-SLUG_BY_TEAM = {
-    "ARI": "ari", "ATL": "atl", "BAL": "bal", "BUF": "buf", "CAR": "car", "CHI": "chi",
-    "CIN": "cin", "CLE": "cle", "DAL": "dal", "DEN": "den", "DET": "det", "GB": "gb",
-    "HOU": "hou", "IND": "ind", "JAX": "jac", "KC": "kc", "LV": "lv", "LAC": "lac",
-    "LAR": "lar", "MIA": "mia", "MIN": "min", "NE": "ne", "NO": "no",
-    "NYG": "nyg", "NYJ": "nyj", "PHI": "phi", "PIT": "pit", "SEA": "sea",
-    "SF": "sf", "TB": "tb", "TEN": "ten", "WSH": "wsh",
+# Abreviaturas válidas (después de norm_abbr)
+_VALID_ABBR = {
+    "ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB",
+    "HOU","IND","JAX","KC","LV","LAC","LAR","MIA","MIN","NE","NO","NYG",
+    "NYJ","PHI","PIT","SEA","SF","TB","TEN","WSH"
 }
 
-# Sinónimos comunes de abreviaturas -> canonical (clave de SLUG_BY_TEAM)
-ABBR_SYNONYMS = {
-    # Cardinals
-    "ARZ": "ARI",
-    # Jaguars
-    "JAC": "JAX",
-    # Chiefs
-    "KAN": "KC", "KCC": "KC",
-    # Packers
-    "GNB": "GB", "GBP": "GB",
-    # Patriots
-    "NWE": "NE", "NEP": "NE",
-    # Saints
-    "NOR": "NO", "NOS": "NO",
-    # Commanders
-    "WAS": "WSH", "WFT": "WSH", "WASHINGTON": "WSH",
-    # Rams
-    "LA": "LAR", "STL": "LAR", "RAMS": "LAR",
-    # Chargers
-    "SD": "LAC", "SDG": "LAC", "SDC": "LAC",
-    # Raiders
-    "OAK": "LV", "OAKLAND": "LV",
-    # 49ers
-    "SFO": "SF", "SFN": "SF", "SF49ERS": "SF",
-    # Bucs
-    "TAM": "TB", "TBB": "TB",
-    # Others duplicates of city names that a veces llegan en CSV
-    "PHILA": "PHI",
-    "CLV": "CLE",
-}
+# Algunos hosts de ESPN usan minúsculas por abbr
+def _slug(abbr: str) -> str:
+    return abbr.lower()
 
-# Nombres completos → canonical abbr
-NAME_TO_ABBR = {
-    "ARIZONACARDINALS": "ARI",
-    "ATLANTAFALCONS": "ATL",
-    "BALTIMORERAVENS": "BAL",
-    "BUFFALOBILLS": "BUF",
-    "CAROLINAPANTHERS": "CAR",
-    "CHICAGOBEARS": "CHI",
-    "CINCINNATIBENGALS": "CIN",
-    "CLEVELANDBROWNS": "CLE",
-    "DALLASCOWBOYS": "DAL",
-    "DENVERBRONCOS": "DEN",
-    "DETROITLIONS": "DET",
-    "GREENBAYPACKERS": "GB",
-    "HOUSTONTEXANS": "HOU",
-    "INDIANAPOLISCOlts".upper(): "IND",
-    "JACKSONVILLEJAGUARS": "JAX",
-    "KANSASCITYCHIEFS": "KC",
-    "LASVEGASRAIDERS": "LV",
-    "LOSANGELESCHARGERS": "LAC",
-    "LOSANGELESRAMS": "LAR",
-    "MIAMIDOLPHINS": "MIA",
-    "MINNESOTAVIKINGS": "MIN",
-    "NEWENGLANDPATRIOTS": "NE",
-    "NEWORLEANSSAINTS": "NO",
-    "NEWYORKGIANTS": "NYG",
-    "NEWYORKJETS": "NYJ",
-    "PHILADELPHIAEAGLES": "PHI",
-    "PITTSBURGHSTEELERS": "PIT",
-    "SEATTLESEAHAWKS": "SEA",
-    "SANFRANCISCO49ERS": "SF",
-    "TAMPABAYBUCCANEERS": "TB",
-    "TENNESSEETITANS": "TEN",
-    "WASHINGTONCOMMANDERS": "WSH",
-}
-
-def _abbr_to_slug(token: str) -> str | None:
-    """Convierte una abreviatura o sinónimo a slug ESPN."""
-    if not token:
+def get_logo_url(team_abbr: str) -> str | None:
+    a = norm_abbr(team_abbr)
+    if not a or a not in _VALID_ABBR:
         return None
-    key = _norm_token(token)
-    # Primero: si ya es canonical
-    if key in SLUG_BY_TEAM:
-        return SLUG_BY_TEAM[key]
-    # Segundo: sinónimos -> canonical
-    if key in ABBR_SYNONYMS:
-        canon = ABBR_SYNONYMS[key]
-        return SLUG_BY_TEAM.get(canon)
-    return None
+    # ESPN 500px transparent PNGs por abreviatura (funciona para los 32 equipos)
+    return f"https://a.espncdn.com/i/teamlogos/nfl/500/{_slug(a)}.png"
 
-def _name_to_slug(name: str) -> str | None:
-    """Convierte un nombre completo (o cercano) a slug ESPN."""
-    if not name:
-        return None
-    key = _norm_token(name)
-    # Quita “THE”
-    key = key.replace("THE", "")
-    # NORMALIZACIONES menores
-    key = key.replace("SAINTS", "SAINTS")  # placeholder para consistencia
-    abbr = NAME_TO_ABBR.get(key)
-    if not abbr:
-        return None
-    return SLUG_BY_TEAM.get(abbr)
+def bet_card(row: pd.Series):
+    htm = norm_abbr(row.get("home_team", "")) or norm_abbr(row.get("team", ""))
+    atm = norm_abbr(row.get("away_team", "")) or norm_abbr(row.get("opponent", ""))
+    side = str(row.get("side", "")).title() if pd.notna(row.get("side")) else ""
 
-def get_logo_url(team: str) -> str | None:
-    """
-    Acepta abreviaturas (KC, JAX, LAR, WSH, etc.) o nombres completos
-    (Kansas City Chiefs, Jacksonville Jaguars, Los Angeles Rams...).
-    Devuelve URL del PNG en ESPN o None si no hay match.
-    """
-    if not team:
-        return None
+    wl_profit = pd.to_numeric(row.get("profit"), errors="coerce")
+    stake = pd.to_numeric(row.get("stake"), errors="coerce")
+    dec = pd.to_numeric(row.get("decimal_odds"), errors="coerce")
+    ml  = pd.to_numeric(row.get("ml"), errors="coerce")
+    if pd.isna(ml) and pd.notna(dec):
+        ml = decimal_to_american(dec)
 
-    # 1) Abreviatura directa o sinónimo
-    slug = _abbr_to_slug(team)
-    if slug:
-        return _BASE.format(slug=slug)
+    if pd.isna(wl_profit): status_color, status_label = "#888888", "OPEN"
+    elif wl_profit > 0:    status_color, status_label = "#1FA37C", "WIN"
+    elif wl_profit < 0:    status_color, status_label = "#D64545", "LOSS"
+    else:                  status_color, status_label = "#8884D8", "PUSH"
 
-    # 2) Intentar con nombre completo
-    slug = _name_to_slug(team)
-    if slug:
-        return _BASE.format(slug=slug)
+    wk = str(row.get("week_label", row.get("week", "")))
+    date_txt = str(row.get("schedule_date", ""))[:10] if pd.notna(row.get("schedule_date")) else ""
 
-    # 3) Si viene ya como slug (raro, pero por si acaso)
-    t = str(team).lower().strip()
-    if t in SLUG_BY_TEAM.values():
-        return _BASE.format(slug=t)
+    sh = row.get("score_home", None); sa = row.get("score_away", None)
+    has_score = pd.notna(sh) and pd.notna(sa)
 
-    return None
+    def logo_tag(team_abbr: str, fallback_bg: str = "#222"):
+        url = get_logo_url(team_abbr) if team_abbr else None
+        if url:
+            return f"<img src='{url}' width='44' height='44' style='object-fit:contain;'/>"
+        t = (team_abbr or 'NA')[:3]
+        return (
+            f"<div style='width:44px;height:44px;border-radius:50%;"
+            f"background:{fallback_bg};color:#fff;display:flex;align-items:center;"
+            f"justify-content:center;font-weight:800;'>{t}</div>"
+        )
+
+    left_logo  = logo_tag(htm, "#1f2937")
+    right_logo = logo_tag(atm, "#374151")
+
+    score_html = (
+        f"<div style='font-weight:900;font-size:26px;letter-spacing:.5px;'>{int(sh)} — {int(sa)}</div>"
+        if has_score else "<div style='opacity:.55;font-weight:700;'>TBD</div>"
+    )
+
+    subline_left  = f"{htm}{(' • '+side) if side else ''}".strip()
+    subline_right = f"{atm}".strip()
+
+    ml_txt    = f"{ml:+.0f}" if pd.notna(ml) else "—"
+    stake_txt = f"${stake:,.2f}" if pd.notna(stake) else "—"
+    prof_txt  = f"${wl_profit:,.2f}" if pd.notna(wl_profit) else "—"
+
+    st.markdown(f"""
+    <div style="
+        border:1px solid #e9e9e9;border-radius:12px;padding:12px; margin-bottom:10px;
+        background:linear-gradient(180deg, rgba(0,0,0,0.02), rgba(0,0,0,0.00));
+        font-size:12.5px;
+    ">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div style="width:8px;height:8px;border-radius:50%;background:{status_color};"></div>
+          <div style="font-weight:600;">{wk}</div>
+          <div style="opacity:.7;">{date_txt}</div>
+        </div>
+        <div style="font-weight:800;color:{status_color}">{status_label}</div>
+      </div>
+
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;">
+        <div style="width:44px; display:flex; align-items:center; justify-content:center;">
+          {left_logo}
+        </div>
+        <div style="flex:1; text-align:center;">
+          {score_html}
+        </div>
+        <div style="width:44px; display:flex; align-items:center; justify-content:center;">
+          {right_logo}
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:6px;">
+        <div style="font-size:12px; opacity:.7; font-weight:600;">{subline_left}</div>
+        <div style="font-size:12px; opacity:.5; font-weight:700;">vs</div>
+        <div style="font-size:12px; opacity:.7; font-weight:600; text-align:right;">{subline_right}</div>
+      </div>
+
+      <div style="display:flex; gap:14px; margin-top:10px; flex-wrap:wrap;">
+        <div><span style="opacity:.6;">Moneyline:</span> <strong>{ml_txt}</strong></div>
+        <div><span style="opacity:.6;">Stake:</span> <strong>{stake_txt}</strong></div>
+        <div><span style="opacity:.6;">Profit:</span> <strong style="color:{status_color};">{prof_txt}</strong></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
