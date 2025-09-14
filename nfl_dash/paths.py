@@ -1,8 +1,12 @@
+from __future__ import annotations
 from pathlib import Path
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
 
 def resolve_dir(*parts) -> Path:
     candidates = [
-        Path(__file__).resolve().parent.parent.joinpath(*parts),  # repo root relative
+        _repo_root().joinpath(*parts),
         Path.cwd().joinpath(*parts),
     ]
     for p in candidates:
@@ -10,16 +14,17 @@ def resolve_dir(*parts) -> Path:
             return p
     return candidates[0]
 
-# Data dirs
-PORTFOLIO_DIR = resolve_dir("data", "processed", "portfolio")
-ARCHIVE_DIR   = resolve_dir("data", "archive")
-BETSWEEK_DIR  = resolve_dir("data", "processed", "bets")
+ARCHIVE_DIR = resolve_dir("data", "archive")
+LIVE_DIR    = resolve_dir("data", "live")
+
+def season_dir(season: int) -> Path:
+    return ARCHIVE_DIR.joinpath(f"season={season}")
+
+def ensure_dir(p: Path) -> Path:
+    p.mkdir(parents=True, exist_ok=True)
+    return p
 
 ODDS_DIRS = [
-    resolve_dir("bootstrap"),
-    resolve_dir("data", "bootstrap"),
-    resolve_dir("data", "processed", "odds"),
-    resolve_dir("data"),
+    LIVE_DIR,
+    ARCHIVE_DIR,
 ]
-
-LOGOS_DIR = resolve_dir("assets", "logos", "nfl")
