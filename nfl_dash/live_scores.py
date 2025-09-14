@@ -1,52 +1,61 @@
-import requests
 import pandas as pd
+import streamlit as st
 
-def _norm(s):
-    return str(s).strip() if s is not None else ""
+from nfl_dash.live_scores import fetch_espn_scoreboard_df
+from nfl_dash.components import game_card
 
-def fetch_espn_scoreboard_df(season: int, week: int) -> pd.DataFrame:
-    url = "https://site.web.api.espn.com/apis/v2/sports/football/nfl/scoreboard"
-    params = {"seasontype": 2, "week": int(week), "dates": int(season)}
-    r = requests.get(url, params=params, timeout=20)
-    r.raise_for_status()
-    data = r.json()
-    rows = []
-    for ev in data.get("events", []) or []:
-        comps = (ev.get("competitions") or [])
-        if not comps:
-            continue
-        comp = comps[0]
-        st_type = (comp.get("status") or {}).get("type") or {}
-        state = _norm(st_type.get("state")).lower()
-        short = _norm(st_type.get("shortDetail"))
-        start_time = _norm(comp.get("date"))
+def _detect_default_week(season: int) -> int:
+    try:
+        from pathlib import Path
+        f = Path(__file__).resolve().parents[1] / "data" / "live" / "odds.csv"
+        if f.exists():
+            df = pd.read_csv(f, low_memory=False)
+            df = df[pd.to_numeric(df.get("season", pd.Series([])), errors="coerce").astype("Int64").eq(season)]
+            if not df.empty and "week" in df.columns:
+                w = pd.to_numeric(df["week"], errors="coerce").dropna()
+                if not w.empty:
+                    return int(w.max())
+    except Exception:
+        pass
+    return 1
 
-        home_team = away_team = None
-        home_score = away_score = None
-        for c in comp.get("competitors", []) or []:
-            team = (c.get("team") or {})
-            name = team.get("displayName") or team.get("name")
-            score = c.get("score")
-            try:
-                score = int(score) if score is not None else None
-            except Exception:
-                score = None
-            if c.get("homeAway") == "home":
-                home_team, home_score = name, score
-            elif c.get("homeAway") == "away":
-                away_team, away_score = name, score
+def render(season: int):
+    st.subheader("Live")
 
-        if home_team and away_team:
-            rows.append({
-                "season": int(season),
-                "week": int(week),
-                "start_time": pd.to_datetime(start_time, errors="coerce", utc=True),
-                "state": state,              # pre | in | post
-                "short": short,              # formatted (e.g., "Q2 12:34", or kickoff ET)
-                "home_team": home_team,
-                "home_score": home_score,
-                "away_team": away_team,
-                "away_score": away_score,
-            })
-    cols = ["season","week","start_time","state","short","home_team","home_score","away_team","away_score"]
-    return pd.DataFrame(rows, columns=cols)
+    col_sel, col_ref = st.columns([0.8, 0.2])
+    with col_sel:
+        week = st.number_input("Week", min_value=1, max_value=22, value=_detect_default_week(season), step=1)
+    with col_ref:
+        refresh_secs = st.selectbox("Auto-refresh", options=[0, 30, 60, 120], index=2)
+
+    # Fetch con manejo de errores (no crashea la app)
+    try:
+        df = fetch_espn_scoreboard_df(season=int(season), week=int(week))
+    except Exception:
+        df = pd.DataFrame()
+
+    if df.empty:
+        st.info("Live feed unavailable or no games for this week right now.")
+        return
+
+    # Auto-refresh opcional usando streamlit-extras si está instalado
+    if (df["state"].astype(str).str.lower().eq("in")).any() and refresh_secs > 0:
+        try:
+            from streamlit_extras.st_autorefresh import st_autorefresh
+            st_autorefresh(interval=refresh_secs*1000, key=f"live_autorefresh_{season}_{week}")
+        except Exception:
+            st.caption("Tip: add `streamlit-extras` to enable auto-refresh widget.")
+
+    st.caption("All games for selected week. LIVE games are highlighted.")
+
+    cards = list(df.itertuples(index=False))
+    idx = 0
+    cols_per_row = 3
+    rows = (len(cards) + cols_per_row - 1) // cols_per_row
+    for _ in range(rows):
+        col_objs = st.columns(cols_per_row)
+        for j in range(cols_per_row):
+            if idx < len(cards):
+                with col_objs[j]:
+                    game_card(pd.Series(cards[idx]._asdict()))
+                idx += 1
