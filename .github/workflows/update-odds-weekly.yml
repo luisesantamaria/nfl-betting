@@ -2,6 +2,7 @@ name: update_odds_weekly
 
 on:
   schedule:
+    # Miércoles 15:05 UTC (~09:05 CDMX)
     - cron: "5 15 * * 3"
   workflow_dispatch:
     inputs:
@@ -25,17 +26,43 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install pandas requests python-dateutil pytz
+
       - name: Ensure folders
         run: |
           mkdir -p data/live
           mkdir -p data/archive
+
+      # 🔎 Verifica que el secret exista (no imprime su valor)
+      - name: Debug secret presence
+        run: |
+          if [ -z "${{ secrets.AUTH_API_KEY }}" ]; then
+            echo "❌ AUTH_API_KEY is NOT set (repository secret missing)."
+            exit 1
+          else
+            echo "✅ AUTH_API_KEY is present."
+          fi
+
+      # 🔎 Verifica el mapeo del secret -> env var que usará el script
+      - name: Debug env var mapping
+        env:
+          ODDS_API_KEY: ${{ secrets.AUTH_API_KEY }}
+        run: |
+          if [ -z "$ODDS_API_KEY" ]; then
+            echo "❌ ODDS_API_KEY env var is empty."
+            exit 1
+          else
+            echo "✅ ODDS_API_KEY env var is set."
+          fi
+
       - name: Fetch odds (current week) + auto-archive if season ended
         env:
           ODDS_API_KEY: ${{ secrets.AUTH_API_KEY }}
@@ -53,11 +80,13 @@ jobs:
             ${SEASON:+--season "$SEASON"} \
             ${WEEK:+--week "$WEEK"} \
             $( [ "$ARCHIVE_FORCE" = "true" ] && echo "--archive-force" )
+
       - name: Upload artifact (odds-live)
         uses: actions/upload-artifact@v4
         with:
           name: odds-live
           path: data/live/odds.csv
+
       - name: Commit & push
         run: |
           git config user.name  "github-actions"
