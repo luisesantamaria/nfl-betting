@@ -1,37 +1,69 @@
-import pandas as pd
 import streamlit as st
-from nfl_dash.data_io import load_pnl_weekly
-from nfl_dash.utils import kpis_from_pnl, add_week_order
-from nfl_dash.charts import (
-    chart_bankroll,
-    chart_profit_bars,
-    chart_drawdown_area,
-    chart_stake_bars,
-)
+import pandas as pd
+import altair as alt
+from nfl_dash.utils import load_pnl, ORDER_INDEX
+
+def chart_bankroll(df: pd.DataFrame, height: int) -> alt.Chart:
+    d = df.copy()
+    d["week_order"] = d["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+    d = d.sort_values("week_order")
+    y_min = max(0.0, d["bankroll"].min() - 40) if "bankroll" in d.columns else None
+    y_max = d["bankroll"].max() + 40 if "bankroll" in d.columns else None
+    return alt.Chart(d).mark_line(point=True).encode(
+        x=alt.X("week_label:N", sort=list(ORDER_INDEX.keys()), title=""),
+        y=alt.Y("bankroll:Q", title="Bankroll ($)", scale=alt.Scale(domain=(y_min, y_max)) if y_min and y_max else alt.Undefined),
+        tooltip=["week_label", "bankroll"]
+    ).properties(height=260)
+
+def chart_weekly_profit(df: pd.DataFrame, height: int) -> alt.Chart:
+    d = df.copy()
+    d["week_order"] = d["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+    d = d.sort_values("week_order")
+    return alt.Chart(d).mark_bar().encode(
+        x=alt.X("week_label:N", sort=list(ORDER_INDEX.keys()), title=""),
+        y=alt.Y("profit:Q", title="Weekly Profit ($)"),
+        tooltip=["week_label", "profit"]
+    ).properties(height=260)
+
+def chart_cumprofit_alt(df: pd.DataFrame, height: int) -> alt.Chart:
+    d = df.copy()
+    d["week_order"] = d["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+    d = d.sort_values("week_order")
+    if "profit" in d.columns:
+        d["cum_profit"] = d["profit"].cumsum()
+    else:
+        d["cum_profit"] = 0.0
+    return alt.Chart(d).mark_area(opacity=0.35).encode(
+        x=alt.X("week_label:N", sort=list(ORDER_INDEX.keys()), title=""),
+        y=alt.Y("cum_profit:Q", title="Cumulative Profit ($)"),
+        tooltip=["week_label", "cum_profit"]
+    ).properties(height=260)
+
+def chart_stake(df: pd.DataFrame, height: int) -> alt.Chart:
+    d = df.copy()
+    d["week_order"] = d["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+    d = d.sort_values("week_order")
+    return alt.Chart(d).mark_bar().encode(
+        x=alt.X("week_label:N", sort=list(ORDER_INDEX.keys()), title=""),
+        y=alt.Y("stake:Q", title="Weekly Stake ($)"),
+        tooltip=["week_label", "stake"]
+    ).properties(height=260)
 
 def render(season: int):
-    st.subheader("Portfolio")
-
-    pnl = load_pnl_weekly(season)
+    st.header("Portfolio")
+    pnl = load_pnl(season)
     if pnl.empty:
-        st.caption("No `pnl_weekly_{year}.csv` found for this season.")
+        st.info("No portfolio data.")
         return
 
-    initial_bankroll, final_bankroll, total_profit, total_stake, yield_pct, profits, stakes = kpis_from_pnl(pnl)
+    g1, g2 = st.columns(2)
+    with g1:
+        st.altair_chart(chart_bankroll(pnl, 260), use_container_width=True)
+    with g2:
+        st.altair_chart(chart_weekly_profit(pnl, 260), use_container_width=True)
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Initial", f"${initial_bankroll:,.2f}")
-    m2.metric("Final",   f"${final_bankroll:,.2f}", f"{(final_bankroll-initial_bankroll):,.2f}")
-    m3.metric("Total Profit", f"${total_profit:,.2f}")
-    m4.metric("Yield",        f"{yield_pct:.2f}%")
-
-    bank_df  = add_week_order(pnl[["week_label", "bankroll"]].dropna())
-    prof_df  = add_week_order(pd.DataFrame({"week_label": pnl["week_label"], "profit": profits, "stake": stakes}))
-    stake_df = add_week_order(pd.DataFrame({"week_label": pnl["week_label"], "stake": stakes}))
-
-    c1, c2 = st.columns(2)
-    c3, c4 = st.columns(2)
-    with c1: st.altair_chart(chart_bankroll(bank_df, height=220), use_container_width=True)
-    with c2: st.altair_chart(chart_profit_bars(prof_df, height=220), use_container_width=True)
-    with c3: st.altair_chart(chart_drawdown_area(bank_df, height=220), use_container_width=True)
-    with c4: st.altair_chart(chart_stake_bars(stake_df, height=220), use_container_width=True)
+    g3, g4 = st.columns(2)
+    with g3:
+        st.altair_chart(chart_cumprofit_alt(pnl, 260), use_container_width=True)
+    with g4:
+        st.altair_chart(chart_stake(pnl, 260), use_container_width=True)
