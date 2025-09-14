@@ -5,7 +5,8 @@ from .utils import ORDER_INDEX
 def _week_sort(domain=None):
     if domain is None:
         domain = list(ORDER_INDEX.keys())
-    return alt.Sort(domain=domain)
+    # Altair v5: usar values=... (domain es para Scale, no para Sort)
+    return alt.Sort(values=domain)
 
 def chart_sparkline_cumprofit(cum_df: pd.DataFrame, height: int = 200) -> alt.Chart:
     df = cum_df.copy()
