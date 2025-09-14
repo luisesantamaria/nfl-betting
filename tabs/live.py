@@ -8,25 +8,46 @@ from nfl_dash.utils import norm_abbr
 from nfl_dash.logos import get_logo_url
 
 DAY_ORDER = ["Thursday", "Saturday", "Sunday", "Monday"]
+SUNDAY_ORDER = ["Sun 1:00 PM", "Sun 4:05 PM", "Sun 4:25 PM", "Sun 8:20 PM", "Sun Other"]
+
+
+def _wednesday_anchor_et(ts_et: pd.Timestamp) -> pd.Timestamp:
+    """Devuelve el miércoles 00:00 ET de la semana de ts_et (o el miércoles anterior si el juego es jueves)."""
+    # Asegurar zona horaria
+    if ts_et.tz is None:
+        ts_et = ts_et.tz_localize("US/Eastern")
+    else:
+        ts_et = ts_et.tz_convert("US/Eastern")
+    # weekday: Mon=0 ... Sun=6; Wednesday=2
+    days_since_wed = (ts_et.weekday() - 2) % 7
+    anchor = (ts_et - pd.Timedelta(days=days_since_wed)).normalize()
+    return anchor
 
 
 def _guess_current_week(season: int) -> int:
-    """Calcula la semana de NFL a partir del regular_start de SEASON_RULES."""
+    """Calcula la semana NFL usando corte de miércoles 00:00 ET respecto a regular_start."""
     rules = SEASON_RULES.get(int(season), {})
-    start = rules.get("regular_start", None)
-    if not start:
+    regular_start = rules.get("regular_start", None)
+    if not regular_start:
         return 1
-    start_ts = pd.Timestamp(start, tz="UTC")
-    now = pd.Timestamp.now(tz="UTC")
-    if now < start_ts:
+    # regular_start es kickoff del TNF semana 1; anclar al miércoles de esa semana
+    rs = pd.Timestamp(regular_start)
+    if rs.tz is None:
+        rs = rs.tz_localize("UTC")
+    rs_et = rs.tz_convert("US/Eastern")
+    anchor_wed = _wednesday_anchor_et(rs_et)
+
+    now_et = pd.Timestamp.now(tz="US/Eastern")
+    if now_et < anchor_wed:
         return 1
-    # Semana 1 comienza en regular_start; clamp 1..22 (incluye postemporada si hiciera falta)
-    weeks = int((now - start_ts).days // 7) + 1
-    return max(1, min(22, weeks))
+
+    delta_days = (now_et - anchor_wed).days
+    week = int(delta_days // 7) + 1
+    return max(1, min(22, week))
 
 
 def _pick_week_and_fetch(season: int):
-    """Toma la semana estimada; si viene vacía, prueba semana-1 y semana+1."""
+    """Usa la semana estimada; si vacío, prueba semana-1 y semana+1."""
     w = _guess_current_week(season)
     for cand in [w, max(1, w - 1), min(22, w + 1)]:
         df = fetch_espn_scoreboard_df(int(season), int(cand))
@@ -42,15 +63,32 @@ def _bucket_day(ts: pd.Timestamp) -> str:
     return local.strftime("%A")  # Thursday/Saturday/Sunday/Monday
 
 
+def _sunday_subbucket(ts: pd.Timestamp) -> str:
+    """Clasifica ventanas del domingo: 1:00, 4:05, 4:25, 8:20 (SNF); otros -> 'Sun Other'."""
+    if pd.isna(ts):
+        return "Sun Other"
+    local = ts.tz_convert("US/Eastern")
+    if local.weekday() != 6:  # Sunday=6
+        return ""
+    h, m = local.hour, local.minute
+    if h == 13:
+        return "Sun 1:00 PM"
+    if h == 16 and m == 5:
+        return "Sun 4:05 PM"
+    if h == 16 and m == 25:
+        return "Sun 4:25 PM"
+    if h == 20 and m == 20:
+        return "Sun 8:20 PM"
+    return "Sun Other"
+
+
 def _kickoff_str(ts: pd.Timestamp) -> str:
     if pd.isna(ts):
         return ""
     local = ts.tz_convert("US/Eastern")
-    # Formato: 9/14 • 1:00 PM ET
     try:
         return local.strftime("%-m/%-d • %-I:%M %p ET")
     except Exception:
-        # En Windows, usar sin '-'
         return local.strftime("%m/%d • %I:%M %p ET")
 
 
@@ -128,29 +166,49 @@ def render(season: int):
         return
 
     df = df.copy()
+    # Día (Thursday/Saturday/Sunday/Monday)
     df["bucket"] = df["start_time"].apply(_bucket_day)
+    df["bucket"] = pd.Categorical(df["bucket"], categories=DAY_ORDER, ordered=True)
 
-    # Orden fijo de días; si falta alguno, se omite
-    cat = pd.Categorical(df["bucket"], categories=DAY_ORDER, ordered=True)
-    df["bucket"] = cat
+    # Sub-bucket solo para Sunday (ventanas)
+    df["sub"] = df["start_time"].apply(_sunday_subbucket)
+    df["sub"] = pd.Categorical(df["sub"], categories=SUNDAY_ORDER, ordered=True)
 
-    # Orden dentro de cada día por hora; el jueves (aunque ya haya pasado) queda arriba por el bucket
+    # Orden general: día -> hora
     df = df.sort_values(["bucket", "start_time"], ascending=[True, True])
 
-    # Render por día en secciones
     for day in [d for d in DAY_ORDER if (df["bucket"] == d).any()]:
         st.markdown(f"### {day}")
         rows = df[df["bucket"] == day].reset_index(drop=True)
 
-        # Grid 3 columnas (ajústalo si prefieres 2 o 4)
-        cols_per_row = 3
-        total = len(rows)
-        it = 0
-        while it < total:
-            col_objs = st.columns(cols_per_row)
-            for j in range(cols_per_row):
-                if it >= total:
-                    break
-                with col_objs[j]:
-                    _game_card(rows.loc[it])
-                it += 1
+        if day != "Sunday":
+            # Render simple en grid
+            cols_per_row = 3
+            total = len(rows)
+            it = 0
+            while it < total:
+                col_objs = st.columns(cols_per_row)
+                for j in range(cols_per_row):
+                    if it >= total:
+                        break
+                    with col_objs[j]:
+                        _game_card(rows.loc[it])
+                    it += 1
+        else:
+            # Sunday: sub-secciones por ventana
+            for sub in [s for s in SUNDAY_ORDER if (rows["sub"] == s).any()]:
+                sub_rows = rows[rows["sub"] == sub].reset_index(drop=True)
+                if sub_rows.empty:
+                    continue
+                st.markdown(f"#### {sub}")
+                cols_per_row = 3
+                total = len(sub_rows)
+                it = 0
+                while it < total:
+                    col_objs = st.columns(cols_per_row)
+                    for j in range(cols_per_row):
+                        if it >= total:
+                            break
+                        with col_objs[j]:
+                            _game_card(sub_rows.loc[it])
+                        it += 1
