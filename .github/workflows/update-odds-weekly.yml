@@ -41,20 +41,20 @@ jobs:
           mkdir -p data/live
           mkdir -p data/archive
 
-      # 🔎 Verifica que el secret exista (no imprime su valor)
+      # 🔎 Verifica que el secret con TU nombre exista (no imprime su valor)
       - name: Debug secret presence
         run: |
-          if [ -z "${{ secrets.AUTH_API_KEY }}" ]; then
-            echo "❌ AUTH_API_KEY is NOT set (repository secret missing)."
+          if [ -z "${{ secrets.ODDS_API_KEY }}" ]; then
+            echo "❌ ODDS_API_KEY repo secret is NOT set."
             exit 1
           else
-            echo "✅ AUTH_API_KEY is present."
+            echo "✅ ODDS_API_KEY secret is present."
           fi
 
       # 🔎 Verifica el mapeo del secret -> env var que usará el script
       - name: Debug env var mapping
         env:
-          ODDS_API_KEY: ${{ secrets.AUTH_API_KEY }}
+            ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
           if [ -z "$ODDS_API_KEY" ]; then
             echo "❌ ODDS_API_KEY env var is empty."
@@ -65,7 +65,7 @@ jobs:
 
       - name: Fetch odds (current week) + auto-archive if season ended
         env:
-          ODDS_API_KEY: ${{ secrets.AUTH_API_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           PF_INPUT: ${{ github.event.inputs.price_factor }}
           SEASON: ${{ github.event.inputs.season }}
           WEEK: ${{ github.event.inputs.week }}
