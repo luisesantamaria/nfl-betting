@@ -1,3 +1,14 @@
+#!/usr/bin/env python3
+# scripts/fetch_odds.py
+#
+# Descarga odds (The Odds API) y mantiene data/live/odds.csv
+# - API key desde env ODDS_API_KEY (Secrets)
+# - markets: h2h,spreads,totals
+# - Dedup por event_id
+# - Infere season/week/week_label (Week1 = Thu después de Labor Day)
+# - Filtra por la "semana actual" por defecto (evita incluir la próxima semana)
+# - Aplica "execution price factor" a decimales/moneylines y guarda también columnas *_raw
+
 import os
 import sys
 import argparse
@@ -10,6 +21,7 @@ import requests
 
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/{sport}/odds"
 
+# ---------------------- util cuotas ----------------------
 
 def american_to_decimal(m):
     if m is None or (isinstance(m, float) and math.isnan(m)):
@@ -34,11 +46,13 @@ def best_decimal(prices):
     clean = [c for c in clean if not (isinstance(c, float) and math.isnan(c))]
     return max(clean) if clean else np.nan
 
+# ---------------------- fetch/parse ----------------------
+
 def fetch_events(api_key: str, sport: str, regions: str, markets: str) -> list:
     params = {
         "apiKey": api_key,
         "regions": regions,
-        "markets": markets,          
+        "markets": markets,           # "h2h,spreads,totals"
         "oddsFormat": "american",
         "dateFormat": "iso",
     }
@@ -116,10 +130,16 @@ def parse_rows(events: list, want_markets: set) -> pd.DataFrame:
             schedule_date=commence,
             home_team=home,
             away_team=away,
-            ml_home=decimal_to_american(dec_home),
-            ml_away=decimal_to_american(dec_away),
-            decimal_home=dec_home,
-            decimal_away=dec_away,
+            # primero guardamos raw; luego ajustamos
+            ml_home_raw=decimal_to_american(dec_home),
+            ml_away_raw=decimal_to_american(dec_away),
+            decimal_home_raw=dec_home,
+            decimal_away_raw=dec_away,
+            # estos se rellenan tras el ajuste:
+            ml_home=np.nan,
+            ml_away=np.nan,
+            decimal_home=np.nan,
+            decimal_away=np.nan,
             spread_home=spread_home,
             spread_away=spread_away,
             over_under_line=total_line,
@@ -127,6 +147,8 @@ def parse_rows(events: list, want_markets: set) -> pd.DataFrame:
         ))
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+# ---------------------- season/week infer ----------------------
 
 def compute_season_from_date(ts_utc: pd.Timestamp) -> int:
     """Ene–Feb pertenecen a la temporada del año previo; Mar–Dic al mismo año."""
@@ -163,9 +185,10 @@ def infer_week_fields(ts_utc: pd.Timestamp):
     return (wk, LABEL_POST.get(wk, f"Week {wk}"))
 
 def current_season_week(now_utc: datetime | None = None):
+    # Evita pasar tz dos veces
     if now_utc is None:
-        now_utc = datetime.now(timezone.utc)  
-    ts = pd.Timestamp(now_utc)            
+        now_utc = datetime.now(timezone.utc)  # aware
+    ts = pd.Timestamp(now_utc)
     if ts.tz is None:
         ts = ts.tz_localize("UTC")
     else:
@@ -174,6 +197,27 @@ def current_season_week(now_utc: datetime | None = None):
     w, lbl = infer_week_fields(ts)
     return season, w, lbl
 
+# ---------------------- ajuste de precio ----------------------
+
+def apply_price_factor(parsed: pd.DataFrame, factor: float) -> pd.DataFrame:
+    """Crea columnas ajustadas y las asigna como canónicas (decimal_*, ml_*)."""
+    out = parsed.copy()
+    for side in ("home", "away"):
+        dr = f"decimal_{side}_raw"
+        mr = f"ml_{side}_raw"
+        if dr in out.columns:
+            out[f"decimal_{side}"] = out[dr].astype(float) / float(factor)
+            out[f"ml_{side}"] = out[f"decimal_{side}"].apply(decimal_to_american)
+        else:
+            out[f"decimal_{side}"] = np.nan
+            out[f"ml_{side}"] = np.nan
+        # Si faltara *_raw por algún motivo, lo reconstruimos desde decimal_*
+        if mr not in out.columns:
+            out[mr] = out[f"decimal_{side}"].apply(decimal_to_american)
+    out["price_factor"] = float(factor)
+    return out
+
+# ---------------------- main ----------------------
 
 def main():
     ap = argparse.ArgumentParser()
@@ -181,10 +225,14 @@ def main():
     ap.add_argument("--sport", type=str, default="americanfootball_nfl")
     ap.add_argument("--regions", type=str, default="us")
     ap.add_argument("--markets", type=str, default="h2h,spreads,totals")
+    # Filtros de semana:
     ap.add_argument("--only-current-week", action="store_true", default=True,
                     help="Conservar únicamente la semana actual en base a la fecha de ejecución.")
     ap.add_argument("--season", type=int, default=None, help="Override de season (opcional).")
     ap.add_argument("--week", type=int, default=None, help="Override de week (opcional).")
+    # Factor de precio:
+    ap.add_argument("--price-factor", type=float, default=float(os.environ.get("ODDS_PRICE_FACTOR", "1.022")),
+                    help="Factor de ejecución para recortar decimales (ej. 1.022).")
     args = ap.parse_args()
 
     api_key = os.environ.get("ODDS_API_KEY", "").strip()
@@ -199,8 +247,12 @@ def main():
     col_order = [
         "season", "week", "week_label", "schedule_date",
         "home_team", "away_team",
+        # canónicas (ajustadas):
         "ml_home", "ml_away", "decimal_home", "decimal_away",
+        # referencia (raw):
+        "ml_home_raw", "ml_away_raw", "decimal_home_raw", "decimal_away_raw",
         "spread_home", "spread_away", "over_under_line",
+        "price_factor",
         "event_id"
     ]
 
@@ -213,9 +265,12 @@ def main():
         weeks = parsed["schedule_date"].apply(infer_week_fields)
         parsed["week"] = [w for (w, lbl) in weeks]
         parsed["week_label"] = [lbl for (w, lbl) in weeks]
-        parsed = parsed[parsed["week"].notna()] 
+        parsed = parsed[parsed["week"].notna()]  # filtra pre/indef
+        # aplicar ajuste
+        parsed = apply_price_factor(parsed, args.price_factor)
         parsed = parsed.reindex(columns=col_order)
 
+    # Carga previo
     live_path = args.live_file
     os.makedirs(os.path.dirname(live_path), exist_ok=True)
     if os.path.exists(live_path):
@@ -227,11 +282,13 @@ def main():
         prev = pd.DataFrame(columns=col_order)
     prev = prev.reindex(columns=col_order)
 
+    # Unir (si no llegaron nuevas, conserva prev)
     if parsed.empty:
         combined = prev.copy()
     else:
         combined = pd.concat([prev, parsed], ignore_index=True)
 
+    # Completar week/label faltantes en histórico
     if "schedule_date" in combined.columns:
         combined["schedule_date"] = pd.to_datetime(combined["schedule_date"], errors="coerce", utc=True)
         mask = combined["week"].isna() & combined["schedule_date"].notna()
@@ -240,6 +297,7 @@ def main():
             combined.loc[mask, "week"] = [w for (w, lbl) in w2]
             combined.loc[mask, "week_label"] = [lbl for (w, lbl) in w2]
 
+    # ---------- FILTRO DE SEMANA ----------
     cur_season, cur_week, cur_label = current_season_week()
     print(f"[odds] now → season={cur_season}, week={cur_week} ({cur_label})")
     target_season = args.season if args.season is not None else cur_season
@@ -249,7 +307,9 @@ def main():
         before = len(combined)
         combined = combined[(combined["season"] == target_season) & (combined["week"] == target_week)]
         print(f"[odds] week-filter {target_season}/{target_week}: {before} → {len(combined)} rows")
+    # --------------------------------------
 
+    # Orden / de-dup
     if "event_id" in combined.columns and combined["event_id"].notna().any():
         combined = combined.drop_duplicates(subset=["event_id"], keep="last")
     else:
@@ -261,7 +321,7 @@ def main():
     combined = combined.reindex(columns=col_order)
 
     combined.to_csv(live_path, index=False)
-    print(f"[odds] wrote {live_path} | rows={len(combined)}")
+    print(f"[odds] wrote {live_path} | rows={len(combined)} | factor={args.price_factor}")
 
 if __name__ == "__main__":
     main()
