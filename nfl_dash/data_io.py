@@ -1,44 +1,66 @@
-from __future__ import annotations
 from pathlib import Path
-import re
 import pandas as pd
-from .paths import ARCHIVE_DIR, LIVE_DIR
-from .utils import norm_abbr, american_to_decimal, week_label_from_num
+import streamlit as st
+
+from .paths import (
+    ARCHIVE_DIR, LIVE_DIR,
+    season_dir, pnl_path, bets_path, stats_path,
+    odds_live_path, odds_archive_path,
+)
+from .utils import american_to_decimal, norm_abbr
 
 def list_available_seasons() -> list[int]:
     years = []
     if ARCHIVE_DIR.exists():
-        for p in ARCHIVE_DIR.glob("season=*"):
-            m = re.search(r"season=(\d{4})$", str(p))
-            if m:
-                years.append(int(m.group(1)))
-    years = sorted(set(years))
-    return years if years else [2024]
+        for p in sorted(ARCHIVE_DIR.glob("season=*")):
+            try:
+                y = int(str(p.name).split("=")[-1])
+                # considerar season si existe al menos un archivo típico
+                if (p / "pnl.csv").exists() or (p / "bets.csv").exists() or (p / "stats.csv").exists():
+                    years.append(y)
+            except:
+                pass
+    return sorted(set(years))
 
-def _season_dir(year: int) -> Path:
-    return ARCHIVE_DIR / f"season={year}"
-
-def load_pnl(year: int) -> pd.DataFrame:
-    p = _season_dir(year) / "pnl.csv"
-    if not p.exists():
-        return pd.DataFrame(columns=["week_label","profit","stake","bankroll"])
-    df = pd.read_csv(p, low_memory=False)
-    for c in ("profit","stake","bankroll"):
+@st.cache_data
+def load_pnl_weekly(year: int) -> pd.DataFrame:
+    fp = pnl_path(year)
+    if not fp.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(fp, low_memory=False)
+    # normaliza tipos
+    for c in ("week", "profit", "stake", "bankroll"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     if "week_label" not in df.columns:
+        def wl(n):
+            try:
+                n = int(n)
+            except:
+                return "Week 999"
+            if 1 <= n <= 18:
+                return f"Week {n}"
+            return {19:"Wild Card",20:"Divisional",21:"Conference",22:"Super Bowl"}.get(n, f"Week {n}")
         if "week" in df.columns:
-            df["week_label"] = df["week"].apply(week_label_from_num)
+            df["week_label"] = df["week"].apply(wl)
         else:
             df["week_label"] = "Week 999"
     return df
 
-def load_bets(year: int) -> pd.DataFrame:
-    p = _season_dir(year) / "bets.csv"
-    if not p.exists():
+def _first_existing(paths: list[Path]) -> Path | None:
+    for p in paths:
+        if p.exists():
+            return p
+    return None
+
+@st.cache_data
+def load_ledger(year: int) -> pd.DataFrame:
+    fp = _first_existing([bets_path(year)])
+    if not fp:
         return pd.DataFrame()
-    df = pd.read_csv(p, low_memory=False)
-    for c in ("decimal_odds","ml","stake","profit","model_prob","edge","ev"):
+    df = pd.read_csv(fp, low_memory=False)
+    # normaliza tipos y nombres de equipo
+    for c in ("decimal_odds", "ml", "stake", "profit", "model_prob", "edge", "ev"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     if "decimal_odds" not in df.columns and "ml" in df.columns:
@@ -46,31 +68,31 @@ def load_bets(year: int) -> pd.DataFrame:
     for c in ("team","opponent","home_team","away_team"):
         if c in df.columns:
             df[c] = df[c].astype(str).map(norm_abbr)
+    # week_label derivada si falta
     if "week_label" not in df.columns and "week" in df.columns:
-        df["week_label"] = df["week"].apply(week_label_from_num)
+        def wl(n):
+            try:
+                n = int(n)
+            except:
+                return "Week 999"
+            if 1 <= n <= 18:
+                return f"Week {n}"
+            return {19:"Wild Card",20:"Divisional",21:"Conference",22:"Super Bowl"}.get(n, f"Week {n}")
+        df["week_label"] = df["week"].apply(wl)
     return df
 
-def load_scores_for_bets(year: int) -> pd.DataFrame:
-    p = _season_dir(year) / "odds.csv"
-    if not p.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(p, low_memory=False)
-    for c in ("home_team","away_team"):
-        if c in df.columns:
-            df[c] = df[c].astype(str).map(norm_abbr)
-    for c in ("score_home","score_away"):
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    keep = ["season","week","week_label","schedule_date","home_team","away_team","score_home","score_away","event_id"]
-    keep = [c for c in keep if c in df.columns]
-    return df[keep].drop_duplicates()
-
+@st.cache_data
 def load_bets_this_week(year: int) -> pd.DataFrame:
-    p = LIVE_DIR / "this_week.csv"
-    if not p.exists():
+    # Si algún proceso genera bets en vivo, buscamos primero en live.
+    candidates = [
+        LIVE_DIR / "bets_this_week.csv",
+        season_dir(year) / "this_week.csv",
+    ]
+    fp = _first_existing(candidates)
+    if not fp:
         return pd.DataFrame()
-    df = pd.read_csv(p, low_memory=False)
-    for c in ("decimal_odds","ml","stake","model_prob","edge","ev"):
+    df = pd.read_csv(fp, low_memory=False)
+    for c in ("decimal_odds", "ml", "stake", "model_prob", "edge", "ev"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     if "decimal_odds" not in df.columns and "ml" in df.columns:
@@ -79,14 +101,28 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
         if c in df.columns:
             df[c] = df[c].astype(str).map(norm_abbr)
     if "week_label" not in df.columns and "week" in df.columns:
-        df["week_label"] = df["week"].apply(week_label_from_num)
+        def wl(n):
+            try:
+                n = int(n)
+            except:
+                return "Week 999"
+            if 1 <= n <= 18:
+                return f"Week {n}"
+            return {19:"Wild Card",20:"Divisional",21:"Conference",22:"Super Bowl"}.get(n, f"Week {n}")
+        df["week_label"] = df["week"].apply(wl)
     return df
 
-def load_odds_live() -> pd.DataFrame:
-    p = LIVE_DIR / "odds.csv"
-    if not p.exists():
+@st.cache_data
+def load_odds_for_season(year: int) -> pd.DataFrame:
+    # 1) archivo de archivo de la temporada; 2) si no, el live (solo para temporada en curso)
+    fp = _first_existing([odds_archive_path(year), odds_live_path()])
+    if not fp:
         return pd.DataFrame()
-    df = pd.read_csv(p, low_memory=False)
+    df = pd.read_csv(fp, low_memory=False)
+    for c in ("ml_home","ml_away","decimal_home","decimal_away","spread_home","spread_away","over_under_line",
+              "score_home","score_away"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
     for c in ("home_team","away_team"):
         if c in df.columns:
             df[c] = df[c].astype(str).map(norm_abbr)
