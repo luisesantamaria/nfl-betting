@@ -1,5 +1,4 @@
 # tabs/live.py
-import math
 import requests
 import pandas as pd
 import streamlit as st
@@ -10,21 +9,16 @@ from nfl_dash.utils import norm_abbr
 from nfl_dash.logos import get_logo_url
 
 DAY_ORDER = ["Thursday", "Saturday", "Sunday", "Monday"]
-SUNDAY_ORDER = ["Sun 1:00 PM", "Sun 4:05 PM", "Sun 4:25 PM", "Sun 8:20 PM", "Sun Other"]
+SUN_WINDOWS = ["Sun 1:00 PM", "Sun 4:05 PM", "Sun 4:25 PM", "Sun 8:20 PM", "Sun Other"]
 
 
-# -------------------- helpers de semana --------------------
+# ---------------- Semana actual ----------------
 def _espn_current_week(season: int) -> int | None:
-    """
-    Pregunta a ESPN la semana 'actual'. Suele devolver el número correcto
-    incluso de madrugada del domingo. Si no viene, devuelve None.
-    """
-    url = f"https://site.api.espn.com/apis/v2/sports/football/nfl/scoreboard?dates={season}"
+    url = "https://site.api.espn.com/apis/v2/sports/football/nfl/scoreboard"
     try:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
-        j = r.json()
-        wk = (j.get("week") or {}).get("number")
+        wk = (r.json().get("week") or {}).get("number")
         if isinstance(wk, int) and 1 <= wk <= 22:
             return wk
     except Exception:
@@ -33,61 +27,33 @@ def _espn_current_week(season: int) -> int | None:
 
 
 def _tuesday_anchor_et(ts_et: pd.Timestamp) -> pd.Timestamp:
-    """Devuelve el martes 00:00 ET de la semana de ts_et."""
-    if ts_et.tz is None:
-        ts_et = ts_et.tz_localize("US/Eastern")
-    else:
-        ts_et = ts_et.tz_convert("US/Eastern")
-    # Mon=0 ... Sun=6 ; Tuesday=1
+    ts_et = ts_et.tz_localize("US/Eastern") if ts_et.tz is None else ts_et.tz_convert("US/Eastern")
+    # Mon=0...Sun=6 ; Tuesday=1
     days_since_tue = (ts_et.weekday() - 1) % 7
-    anchor = (ts_et - pd.Timedelta(days=days_since_tue)).normalize()
-    return anchor
+    return (ts_et - pd.Timedelta(days=days_since_tue)).normalize()
 
 
-def _guess_current_week_by_rules(season: int) -> int:
-    """
-    Semana NFL con corte martes 00:00 ET, anclada al kickoff de Week 1
-    definido en SEASON_RULES[season]['regular_start'].
-    """
+def _guess_week_by_rules(season: int) -> int:
     rules = SEASON_RULES.get(int(season), {})
-    regular_start = rules.get("regular_start", None)
-    if not regular_start:
+    rs = rules.get("regular_start")
+    if not rs:
         return 1
-
-    rs_utc = pd.Timestamp(regular_start)
-    if rs_utc.tz is None:
-        rs_utc = rs_utc.tz_localize("UTC")
-    rs_et = rs_utc.tz_convert("US/Eastern")
-
-    # ancla martes de la semana 1
-    week1_tue = _tuesday_anchor_et(rs_et)
-
+    rs_utc = pd.Timestamp(rs)
+    rs_utc = rs_utc.tz_localize("UTC") if rs_utc.tz is None else rs_utc
+    week1_tue = _tuesday_anchor_et(rs_utc.tz_convert("US/Eastern"))
     now_et = pd.Timestamp.now(tz="US/Eastern")
     if now_et < week1_tue:
         return 1
-
     delta_days = (now_et - week1_tue).days
-    week = int(delta_days // 7) + 1
-    return max(1, min(22, week))
+    return int(min(22, max(1, delta_days // 7 + 1)))
 
 
-def _detect_week(season: int) -> int:
-    """
-    1) Intento con ESPN (current week).
-    2) Si falla, cálculo por reglas (martes→lunes).
-    """
-    espn_w = _espn_current_week(season)
-    if espn_w:
-        return int(espn_w)
-    return _guess_current_week_by_rules(season)
+def _auto_week(season: int) -> int:
+    return _espn_current_week(season) or _guess_week_by_rules(season)
 
 
 def _pick_week_and_fetch(season: int):
-    """
-    Usamos la semana detectada; si por alguna razón ESPN aún no publica
-    la semana (lista vacía), probamos w+1 y, en último caso, w-1.
-    """
-    w = _detect_week(season)
+    w = _auto_week(season)
     for cand in [w, min(22, w + 1), max(1, w - 1)]:
         df = fetch_espn_scoreboard_df(int(season), int(cand))
         if not df.empty:
@@ -95,22 +61,20 @@ def _pick_week_and_fetch(season: int):
     return w, pd.DataFrame()
 
 
-# -------------------- helpers de render --------------------
+# ---------------- Render helpers ----------------
 def _bucket_day(ts: pd.Timestamp) -> str:
     if pd.isna(ts):
         return "TBD"
-    local = ts.tz_convert("US/Eastern")
-    return local.strftime("%A")  # Thursday/Saturday/Sunday/Monday
+    return ts.tz_convert("US/Eastern").strftime("%A")
 
 
-def _sunday_subbucket(ts: pd.Timestamp) -> str:
-    """Ventanas del domingo: 1:00, 4:05, 4:25, 8:20; el resto -> 'Sun Other'."""
+def _sun_window(ts: pd.Timestamp) -> str:
     if pd.isna(ts):
         return "Sun Other"
-    local = ts.tz_convert("US/Eastern")
-    if local.weekday() != 6:  # Sunday=6
+    t = ts.tz_convert("US/Eastern")
+    if t.weekday() != 6:  # Sunday
         return ""
-    h, m = local.hour, local.minute
+    h, m = t.hour, t.minute
     if h == 13:
         return "Sun 1:00 PM"
     if h == 16 and m == 5:
@@ -122,14 +86,14 @@ def _sunday_subbucket(ts: pd.Timestamp) -> str:
     return "Sun Other"
 
 
-def _kickoff_str(ts: pd.Timestamp) -> str:
+def _kick_txt(ts: pd.Timestamp) -> str:
     if pd.isna(ts):
         return ""
-    local = ts.tz_convert("US/Eastern")
+    t = ts.tz_convert("US/Eastern")
     try:
-        return local.strftime("%-m/%-d • %-I:%M %p ET")
+        return t.strftime("%-m/%-d • %-I:%M %p ET")
     except Exception:
-        return local.strftime("%m/%d • %I:%M %p ET")
+        return t.strftime("%m/%d • %I:%M %p ET")
 
 
 def _live_badge(state: str) -> str:
@@ -156,28 +120,20 @@ def _team_logo(name: str, bg="#222") -> str:
 def _game_card(row: pd.Series):
     left_logo = _team_logo(row.get("home_team", ""), "#1f2937")
     right_logo = _team_logo(row.get("away_team", ""), "#374151")
-    state = str(row.get("state", ""))
-    live_html = _live_badge(state)
-
-    hs = row.get("home_score", None)
-    as_ = row.get("away_score", None)
+    hs, as_ = row.get("home_score"), row.get("away_score")
     has_score = pd.notna(hs) and pd.notna(as_)
     score_html = (
         f"<div style='font-weight:900;font-size:26px;letter-spacing:.5px;'>{int(hs)} — {int(as_)}</div>"
         if has_score else "<div style='opacity:.55;font-weight:700;'>TBD</div>"
     )
 
-    kick = _kickoff_str(row.get("start_time"))
-    home = str(row.get("home_team", ""))
-    away = str(row.get("away_team", ""))
-
     st.markdown(
         f"""
     <div style="border:1px solid #e9e9e9;border-radius:12px;padding:12px;margin-bottom:10px;
                 background:linear-gradient(180deg,rgba(0,0,0,0.02),rgba(0,0,0,0));font-size:12.5px;">
       <div style="display:flex;align-items:center;justify-content:space-between;">
-        <div style="font-weight:600;">{kick}</div>
-        <div>{live_html}</div>
+        <div style="font-weight:600;">{_kick_txt(row.get("start_time"))}</div>
+        <div>{_live_badge(row.get("state",""))}</div>
       </div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;">
@@ -187,9 +143,9 @@ def _game_card(row: pd.Series):
       </div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
-        <div style="font-size:12px;opacity:.8;font-weight:600;">{home}</div>
+        <div style="font-size:12px;opacity:.8;font-weight:600;">{row.get("home_team","")}</div>
         <div style="font-size:12px;opacity:.5;font-weight:700;">vs</div>
-        <div style="font-size:12px;opacity:.8;font-weight:600;text-align:right;">{away}</div>
+        <div style="font-size:12px;opacity:.8;font-weight:600;text-align:right;">{row.get("away_team","")}</div>
       </div>
     </div>
     """,
@@ -197,7 +153,7 @@ def _game_card(row: pd.Series):
     )
 
 
-# -------------------- render --------------------
+# ---------------- Pestaña Live ----------------
 def render(season: int):
     st.subheader("Live")
 
@@ -206,48 +162,44 @@ def render(season: int):
         st.caption("No games found for this week.")
         return
 
+    # refresco amable si hay LIVE
+    if (df["state"].astype(str).str.lower().eq("in")).any():
+        try:
+            from streamlit_extras.st_autorefresh import st_autorefresh
+            st_autorefresh(interval=60_000, key=f"live_auto_{season}_{week}")
+        except Exception:
+            pass
+
+    st.caption(f"Showing Week {week} (auto-detected, Tue 00:00 ET cutoff)")
+
     df = df.copy()
     df["bucket"] = df["start_time"].apply(_bucket_day)
     df["bucket"] = pd.Categorical(df["bucket"], categories=DAY_ORDER, ordered=True)
-
-    df["sub"] = df["start_time"].apply(_sunday_subbucket)
-    df["sub"] = pd.Categorical(df["sub"], categories=SUNDAY_ORDER, ordered=True)
-
-    # Orden: día → hora
-    df = df.sort_values(["bucket", "start_time"], ascending=[True, True])
-
-    st.caption(f"Showing Week {week} (ESPN-driven, Tue 00:00 ET fallback)")
+    df["sub"] = df["start_time"].apply(_sun_window)
+    df["sub"] = pd.Categorical(df["sub"], categories=SUN_WINDOWS, ordered=True)
+    df = df.sort_values(["bucket", "start_time"])
 
     for day in [d for d in DAY_ORDER if (df["bucket"] == d).any()]:
         st.markdown(f"### {day}")
         rows = df[df["bucket"] == day].reset_index(drop=True)
 
         if day != "Sunday":
-            cols_per_row = 3
-            total = len(rows)
-            it = 0
-            while it < total:
-                col_objs = st.columns(cols_per_row)
+            cols_per_row, i, n = 3, 0, len(rows)
+            while i < n:
+                cols = st.columns(cols_per_row)
                 for j in range(cols_per_row):
-                    if it >= total:
-                        break
-                    with col_objs[j]:
-                        _game_card(rows.loc[it])
-                    it += 1
+                    if i >= n: break
+                    with cols[j]: _game_card(rows.loc[i])
+                    i += 1
         else:
-            for sub in [s for s in SUNDAY_ORDER if (rows["sub"] == s).any()]:
+            for sub in [s for s in SUN_WINDOWS if (rows["sub"] == s).any()]:
                 sub_rows = rows[rows["sub"] == sub].reset_index(drop=True)
-                if sub_rows.empty:
-                    continue
+                if sub_rows.empty: continue
                 st.markdown(f"#### {sub}")
-                cols_per_row = 3
-                total = len(sub_rows)
-                it = 0
-                while it < total:
-                    col_objs = st.columns(cols_per_row)
+                cols_per_row, i, n = 3, 0, len(sub_rows)
+                while i < n:
+                    cols = st.columns(cols_per_row)
                     for j in range(cols_per_row):
-                        if it >= total:
-                            break
-                        with col_objs[j]:
-                            _game_card(sub_rows.loc[it])
-                        it += 1
+                        if i >= n: break
+                        with cols[j]: _game_card(sub_rows.loc[i])
+                        i += 1
