@@ -1,104 +1,67 @@
-name: update-odds-weekly
+name: update_odds_weekly
 
 on:
-  # Corre manualmente desde Actions
+  schedule:
+    - cron: "5 15 * * 3"
   workflow_dispatch:
     inputs:
-      markets:
-        description: "Markets to fetch (e.g. h2h,spreads,totals)"
-        required: true
-        default: "h2h,spreads,totals"
-      regions:
-        description: "Regions (e.g. us or us,us2)"
-        required: true
-        default: "us"
-
-  # Miércoles 17:00 UTC cada semana
-  schedule:
-    - cron: "0 17 * * 3"
-
-permissions:
-  contents: write
+      season:
+        description: "Override season (optional)"
+        required: false
+      week:
+        description: "Override week (optional)"
+        required: false
+      archive_force:
+        description: "Force archive now"
+        required: false
+        default: "false"
+      price_factor:
+        description: "Execution price factor (e.g. 1.022)"
+        required: false
+        default: "1.022"
 
 jobs:
   fetch_odds:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests
-
-      - name: Ensure live dir
-        run: mkdir -p data/live
-
-      - name: Quick syntax check
-        run: python -m py_compile scripts/fetch_odds.py
-
-      - name: Quick debug (status/events)
-        env:
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          pip install pandas requests python-dateutil pytz
+      - name: Ensure folders
         run: |
-          python - <<'PY'
-          import os, requests
-          key = os.environ.get("ODDS_API_KEY","")
-          u = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
-          params = {
-              "apiKey": key,
-              "regions": "${{ github.event.inputs.regions || 'us' }}",
-              "markets": "${{ github.event.inputs.markets || 'h2h,spreads,totals' }}",
-              "oddsFormat": "american",
-              "dateFormat": "iso",
-          }
-          r = requests.get(u, params=params, timeout=25)
-          print("status:", r.status_code)
-          print("x-requests-remaining:", r.headers.get("x-requests-remaining"))
-          try:
-              data = r.json()
-          except Exception as e:
-              print("json error:", e)
-              data = None
-          if isinstance(data, list):
-              print("events:", len(data))
-              if data:
-                  sample = data[0]
-                  print("sample.home_team:", sample.get("home_team"))
-                  print("sample.away_team:", sample.get("away_team"))
-                  print("sample.commence_time:", sample.get("commence_time"))
-                  books = sample.get("bookmakers") or []
-                  print("sample.bookmakers:", len(books))
-          else:
-              print("body (truncated):", str(data)[:200])
-          PY
-
-      - name: Fetch odds → data/live/odds.csv
+          mkdir -p data/live
+          mkdir -p data/archive
+      - name: Fetch odds (current week) + auto-archive if season ended
         env:
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          ODDS_API_KEY: ${{ secrets.AUTH_API_KEY }}
+          PF_INPUT: ${{ github.event.inputs.price_factor }}
+          SEASON: ${{ github.event.inputs.season }}
+          WEEK: ${{ github.event.inputs.week }}
+          ARCHIVE_FORCE: ${{ github.event.inputs.archive_force }}
         run: |
+          set -e
+          if [ -z "$PF_INPUT" ]; then PF_INPUT="1.022"; fi
           python scripts/fetch_odds.py \
-            --live-file "data/live/odds.csv" \
-            --sport "americanfootball_nfl" \
-            --regions "${{ github.event.inputs.regions || 'us' }}" \
-            --markets "${{ github.event.inputs.markets || 'h2h,spreads,totals' }}"
-
-      - name: Upload odds artifact
+            --markets "h2h,spreads,totals" \
+            --only-current-week \
+            --price-factor "$PF_INPUT" \
+            ${SEASON:+--season "$SEASON"} \
+            ${WEEK:+--week "$WEEK"} \
+            $( [ "$ARCHIVE_FORCE" = "true" ] && echo "--archive-force" )
+      - name: Upload artifact (odds-live)
         uses: actions/upload-artifact@v4
         with:
           name: odds-live
           path: data/live/odds.csv
-
-      - name: Commit file
+      - name: Commit & push
         run: |
           git config user.name  "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add data/live/odds.csv
-          git commit -m "chore(data): refresh data/live/odds.csv [skip ci]" || echo "no changes"
-          git push
+          git config user.email "actions@users.noreply.github.com"
+          git add data/live/odds.csv data/archive/** || true
+          git commit -m "chore(data): refresh odds live (and archive if season ended) [skip ci]" || echo "no changes"
+          git push || true
