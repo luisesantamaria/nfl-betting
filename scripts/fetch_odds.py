@@ -263,6 +263,7 @@ def main():
     cur_season, cur_week, cur_label = current_season_week()
     print(f"[odds] now → season={cur_season}, week={cur_week} ({cur_label})")
 
+    # ⛔ Preseason/Off-season guard: si aún no hay Week 1, no llamamos API
     if pd.isna(cur_week):
         print("[odds] offseason or preseason detected → skip fetch.")
         if args.archive_force or args.archive_on_season_end:
