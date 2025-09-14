@@ -1,23 +1,19 @@
+# nfl_dash/utils.py
+
 from __future__ import annotations
-import math
-from typing import Dict, Any
+from datetime import date, timedelta
+from typing import Optional, Dict
+
+import numpy as np
 import pandas as pd
 
-# Config opcional (fechas de temporada). Si no hay reglas, calculamos defaults.
-try:
-    from .config import SEASON_RULES
-except Exception:
-    SEASON_RULES: Dict[int, Dict[str, Any]] = {}
-
-# -------------------------------------------------
-# Orden y etiquetas de semanas
-# -------------------------------------------------
-ORDER_LABELS = [f"Week {i}" for i in range(1, 19)] + [
-    "Wild Card", "Divisional", "Conference", "Super Bowl"
-]
+# ----------------------------
+# Semanas (orden & etiquetas)
+# ----------------------------
+ORDER_LABELS = [f"Week {i}" for i in range(1, 19)] + ["Wild Card", "Divisional", "Conference", "Super Bowl"]
 ORDER_INDEX: Dict[str, int] = {lab: i for i, lab in enumerate(ORDER_LABELS)}
 
-def week_label_from_num(n) -> str:
+def week_label_from_num(n: int) -> str:
     try:
         n = int(n)
     except Exception:
@@ -37,151 +33,119 @@ def week_sort_key(df: pd.DataFrame) -> pd.DataFrame:
     out["week_order"] = out["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
     return out
 
-# -------------------------------------------------
-# Moneyline → decimal odds
-# -------------------------------------------------
-def american_to_decimal(ml) -> float | None:
-    try:
-        x = float(ml)
-    except Exception:
-        return None
-    if x == 0 or (hasattr(math, "isnan") and math.isnan(x)):
-        return None
-    if x > 0:
-        return 1.0 + (x / 100.0)
-    return 1.0 + (100.0 / abs(x))
+# ----------------------------
+# Odds utils
+# ----------------------------
+def american_to_decimal(m: Optional[float]) -> float:
+    if m is None or (isinstance(m, float) and np.isnan(m)):
+        return np.nan
+    m = float(m)
+    return 1.0 + (100.0 / abs(m) if m < 0 else m / 100.0)
 
-# -------------------------------------------------
-# Normalización de equipos (abreviaturas)
-# -------------------------------------------------
-_ABBR_MAP = {
-    # AFC
-    "baltimore ravens": "BAL", "buffalo bills": "BUF", "cincinnati bengals": "CIN",
-    "cleveland browns": "CLE", "denver broncos": "DEN", "houston texans": "HOU",
-    "indianapolis colts": "IND", "jacksonville jaguars": "JAX", "kansas city chiefs": "KC",
-    "las vegas raiders": "LV", "los angeles chargers": "LAC", "miami dolphins": "MIA",
-    "new england patriots": "NE", "new york jets": "NYJ", "pittsburgh steelers": "PIT",
-    "tennessee titans": "TEN",
-    # NFC
-    "arizona cardinals": "ARI", "atlanta falcons": "ATL", "carolina panthers": "CAR",
-    "chicago bears": "CHI", "dallas cowboys": "DAL", "detroit lions": "DET",
-    "green bay packers": "GB", "los angeles rams": "LAR", "minnesota vikings": "MIN",
-    "new orleans saints": "NO", "new york giants": "NYG", "philadelphia eagles": "PHI",
-    "san francisco 49ers": "SF", "seattle seahawks": "SEA",
-    "tampa bay buccaneers": "TB", "washington commanders": "WAS",
-    # históricos / variantes
-    "washington football team": "WAS", "oakland raiders": "LV",
-    "san diego chargers": "LAC", "st. louis rams": "LAR", "st louis rams": "LAR",
+def decimal_to_american(d: Optional[float]) -> float:
+    if d is None or (isinstance(d, float) and np.isnan(d)):
+        return np.nan
+    d = float(d)
+    return round((d - 1.0) * 100.0, 0) if d >= 2.0 else round(-100.0 / (d - 1.0), 0)
+
+# ----------------------------
+# Normalización de nombres/equipos
+# ----------------------------
+_TEAM_FIX = {
+    # Abreviaturas históricas → actuales
+    "STL": "LA", "LAR": "LA", "LA RAMS": "LA", "ST. LOUIS RAMS": "LA",
+    "SD": "LAC", "SDG": "LAC", "SAN DIEGO CHARGERS": "LAC", "LA CHARGERS": "LAC",
+    "OAK": "LV", "LVR": "LV", "OAKLAND RAIDERS": "LV", "LAS VEGAS RAIDERS": "LV",
+    "WSH": "WAS", "WASHINGTON FOOTBALL TEAM": "WAS", "WASHINGTON REDSKINS": "WAS",
+    "JAC": "JAX",
+
+    # Abreviaturas de tres letras alternativas
+    "GNB": "GB", "KAN": "KC", "NWE": "NE", "NOR": "NO", "SFO": "SF", "TAM": "TB",
+
+    # Nombres completos → abrev
+    "ARIZONA CARDINALS": "ARI", "ATLANTA FALCONS": "ATL", "BALTIMORE RAVENS": "BAL",
+    "BUFFALO BILLS": "BUF", "CAROLINA PANTHERS": "CAR", "CHICAGO BEARS": "CHI",
+    "CINCINNATI BENGALS": "CIN", "CLEVELAND BROWNS": "CLE", "DALLAS COWBOYS": "DAL",
+    "DENVER BRONCOS": "DEN", "DETROIT LIONS": "DET", "GREEN BAY PACKERS": "GB",
+    "HOUSTON TEXANS": "HOU", "INDIANAPOLIS COLTS": "IND", "JACKSONVILLE JAGUARS": "JAX",
+    "KANSAS CITY CHIEFS": "KC", "LOS ANGELES RAMS": "LA", "LOS ANGELES CHARGERS": "LAC",
+    "LAS VEGAS RAIDERS": "LV", "MIAMI DOLPHINS": "MIA", "MINNESOTA VIKINGS": "MIN",
+    "NEW ENGLAND PATRIOTS": "NE", "NEW ORLEANS SAINTS": "NO", "NEW YORK GIANTS": "NYG",
+    "NEW YORK JETS": "NYJ", "PHILADELPHIA EAGLES": "PHI", "PITTSBURGH STEELERS": "PIT",
+    "SEATTLE SEAHAWKS": "SEA", "SAN FRANCISCO 49ERS": "SF", "TAMPA BAY BUCCANEERS": "TB",
+    "TENNESSEE TITANS": "TEN", "WASHINGTON COMMANDERS": "WAS",
+
+    # Variaciones comunes en feed de odds
+    "LA": "LA", "LAC": "LAC", "LV": "LV", "WAS": "WAS",
+    "ARI": "ARI", "ATL": "ATL", "BAL": "BAL", "BUF": "BUF", "CAR": "CAR", "CHI": "CHI",
+    "CIN": "CIN", "CLE": "CLE", "DAL": "DAL", "DEN": "DEN", "DET": "DET", "GB": "GB",
+    "HOU": "HOU", "IND": "IND", "JAX": "JAX", "KC": "KC", "MIA": "MIA", "MIN": "MIN",
+    "NE": "NE", "NO": "NO", "NYG": "NYG", "NYJ": "NYJ", "PHI": "PHI", "PIT": "PIT",
+    "SEA": "SEA", "SF": "SF", "TB": "TB", "TEN": "TEN",
 }
-def norm_abbr(name: str | None) -> str | None:
-    if name is None:
-        return None
-    key = str(name).strip().lower()
-    abbr = _ABBR_MAP.get(key)
-    if abbr:
-        return abbr
-    # Si ya viene abreviado (<=4) la dejamos como está
-    return name if len(str(name)) <= 4 else name
 
-# -------------------------------------------------
-# Logos (proxy para el módulo logos.py)
-# -------------------------------------------------
-def team_logo(name: str, size: int = 48) -> str | None:
-    try:
-        from .logos import get_logo_url as _get
-    except Exception:
-        try:
-            from .logos import logo_url as _get  # fallback si el nombre difiere
-        except Exception:
-            return None
-    abbr = norm_abbr(name)
-    return _get(abbr if abbr else name, size=size)
+def norm_abbr(s: str) -> str:
+    if s is None:
+        return ""
+    t = str(s).strip().upper()
+    return _TEAM_FIX.get(t, t)
 
-# -------------------------------------------------
-# Capa de conveniencia para carga de datos
-# (Overview los importa desde utils)
-# -------------------------------------------------
-def load_pnl(year: int) -> pd.DataFrame:
-    """
-    Intenta usar nfl_dash.data_io.load_pnl (nuevo). Si no existe,
-    cae a load_pnl_weekly (legacy).
-    """
-    try:
-        from .data_io import load_pnl as _lp
-        return _lp(year)
-    except Exception:
-        try:
-            from .data_io import load_pnl_weekly as _lpw
-            return _lpw(year)
-        except Exception:
-            return pd.DataFrame()
+def team_logo(team: str) -> Optional[str]:
+    # No usamos logos locales. Mantener stub para compatibilidad.
+    return None
 
-def load_bets(year: int) -> pd.DataFrame:
-    """
-    Proxy a nfl_dash.data_io.load_ledger (nuestro histórico de apuestas).
-    """
-    try:
-        from .data_io import load_ledger as _ll
-        return _ll(year)
-    except Exception:
-        return pd.DataFrame()
-
-def load_scores_for_bets(year: int) -> pd.DataFrame:
-    """
-    Proxy al módulo odds_scores.py si existe; si no, devuelve DF vacío.
-    """
-    try:
-        from .odds_scores import load_scores_for_bets as _lsfb
-        return _lsfb(year)
-    except Exception:
-        return pd.DataFrame()
-
-# -------------------------------------------------
-# Estado de temporada (para mostrar "In Season", etc.)
-# -------------------------------------------------
-def _first_monday(year: int, month: int) -> pd.Timestamp:
-    d = pd.Timestamp(year=year, month=month, day=1, tz="UTC")
-    while d.weekday() != 0:  # Monday
-        d += pd.Timedelta(days=1)
+# ----------------------------
+# Estado de temporada
+# ----------------------------
+def _labor_day(year: int) -> date:
+    d = date(year, 9, 1)
+    while d.weekday() != 0:  # Monday = 0
+        d += timedelta(days=1)
     return d
 
-def _first_thursday_on_or_after(ts: pd.Timestamp) -> pd.Timestamp:
-    d = ts
-    while d.weekday() != 3:  # Thursday
-        d += pd.Timedelta(days=1)
+def _super_bowl_sunday(season: int) -> date:
+    y = season + 1
+    d = date(y, 2, 1)
+    while d.weekday() != 6:  # Sunday = 6
+        d += timedelta(days=1)
+    d += timedelta(days=7)   # segundo domingo de febrero
     return d
 
-def _second_sunday_feb(year: int) -> pd.Timestamp:
-    d = pd.Timestamp(year=year, month=2, day=1, tz="UTC")
-    while d.weekday() != 6:  # Sunday
-        d += pd.Timedelta(days=1)
-    d += pd.Timedelta(days=7)  # second Sunday
-    return d.replace(hour=23, minute=59, second=59)
+def _week1_thursday(season: int) -> pd.Timestamp:
+    ld = _labor_day(season)          # primer lunes de septiembre
+    thu = ld + timedelta(days=3)     # jueves de esa misma semana
+    return pd.Timestamp(thu).tz_localize("UTC")
 
-def _default_bounds(year: int) -> Dict[str, pd.Timestamp]:
-    labor_day = _first_monday(year, 9)
-    kickoff_thu = _first_thursday_on_or_after(labor_day)
-    regular_start = kickoff_thu.normalize()
-    post_end = _second_sunday_feb(year + 1)
-    return {"regular_start": regular_start, "post_end": post_end}
+def season_stage(season: int, pnl: pd.DataFrame | None = None) -> str:
+    """
+    Devuelve: 'Preseason' | 'In Season' | 'Season Ended'
+    Inicio: jueves posterior a Labor Day (UTC).
+    Fin: lunes posterior al Super Bowl (UTC).
+    Si el PnL contiene 'Super Bowl' en week_label, se marca como terminada.
+    """
+    now_ts   = pd.Timestamp.utcnow().tz_localize("UTC")
+    start_ts = _week1_thursday(season)
+    end_ts   = pd.Timestamp(_super_bowl_sunday(season)).tz_localize("UTC") + pd.Timedelta(days=1)
 
-def season_stage(year: int, now_utc: pd.Timestamp | None = None) -> str:
-    if now_utc is None:
-        now_utc = pd.Timestamp.utcnow().tz_localize("UTC")
+    if pnl is not None and not pnl.empty and "week_label" in pnl.columns:
+        labels = set(map(str, pnl["week_label"].dropna().tolist()))
+        if "Super Bowl" in labels:
+            return "Season Ended"
 
-    rules: Dict[str, Any] = SEASON_RULES.get(year, {})
-    if "regular_start" in rules and pd.notna(rules["regular_start"]):
-        regular_start = pd.to_datetime(rules["regular_start"], utc=True)
-    else:
-        regular_start = _default_bounds(year)["regular_start"]
-
-    if "post_end" in rules and pd.notna(rules["post_end"]):
-        post_end = pd.to_datetime(rules["post_end"], utc=True)
-    else:
-        post_end = _default_bounds(year)["post_end"]
-
-    if now_utc < regular_start:
+    if now_ts < start_ts:
         return "Preseason"
-    if now_utc <= post_end:
-        return "In Season"
-    return "Season Ended"
+    if now_ts >= end_ts:
+        return "Season Ended"
+    return "In Season"
+
+__all__ = [
+    "ORDER_LABELS",
+    "ORDER_INDEX",
+    "week_label_from_num",
+    "week_sort_key",
+    "american_to_decimal",
+    "decimal_to_american",
+    "norm_abbr",
+    "team_logo",
+    "season_stage",
+]
