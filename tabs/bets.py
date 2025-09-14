@@ -1,163 +1,87 @@
-from __future__ import annotations
-import pandas as pd
 import streamlit as st
+import pandas as pd
+from nfl_dash.data_io import load_bets, load_scores_for_bets
+from nfl_dash.utils import team_logo, week_sort_key
 
-from nfl_dash.data_io import load_ledger
-from nfl_dash.utils import (
-    week_sort_key,
-    week_label_from_num,
-    team_logo,
-    american_to_decimal,
-    norm_abbr,
-    load_scores_for_bets,
-)
-
-CARD_CSS = """
-<style>
-.bet-card {border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:14px; margin-bottom:12px;}
-.bet-head {display:flex; justify-content:space-between; align-items:center; font-size:0.9rem; opacity:0.85;}
-.bet-score {display:flex; justify-content:center; align-items:center; gap:16px; margin:8px 0 6px 0;}
-.bet-score .team {display:flex; align-items:center; gap:10px;}
-.bet-score img {width:40px; height:40px;}
-.bet-score .nums {font-size:1.4rem; font-weight:700;}
-.bet-foot {display:flex; justify-content:space-between; align-items:center; font-size:0.9rem; opacity:0.9;}
-.badge-win {color:#21c55d; font-weight:700;}
-.badge-loss {color:#ef4444; font-weight:700;}
-</style>
-"""
-
-def _standardize(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-
-    # week & label
-    if "week" not in out.columns and "week_num" in out.columns:
-        out["week"] = out["week_num"]
-    if "week_label" not in out.columns:
-        if "week" in out.columns:
-            out["week_label"] = out["week"].apply(week_label_from_num)
-        else:
-            out["week_label"] = "Week 999"
-
-    # team/opponent
-    if "team" not in out.columns:
-        if {"home_team","away_team"}.issubset(out.columns):
-            out["team"] = out["home_team"]
-            out["opponent"] = out["away_team"]
-    if "opponent" not in out.columns and "opp" in out.columns:
-        out["opponent"] = out["opp"]
-
-    for c in ("team","opponent","home_team","away_team"):
-        if c in out.columns:
-            out[c] = out[c].astype(str).map(norm_abbr)
-
-    # odds & money
-    if "decimal_odds" not in out.columns and "ml" in out.columns:
-        out["decimal_odds"] = out["ml"].apply(american_to_decimal)
-
-    for c in ("ml","stake","profit","decimal_odds"):
-        if c in out.columns:
-            out[c] = pd.to_numeric(out[c], errors="coerce")
-
-    # result flag if available
-    if "profit" in out.columns:
-        out["result_flag"] = out["profit"].apply(lambda x: "WIN" if pd.notna(x) and x > 0 else ("LOSS" if pd.notna(x) and x < 0 else ""))
-
-    return out
-
-def _merge_scores(bets: pd.DataFrame, year: int) -> pd.DataFrame:
-    scores = load_scores_for_bets(year)
-    if scores.empty:
+def _merge_scores(bets: pd.DataFrame, scores: pd.DataFrame) -> pd.DataFrame:
+    if bets.empty or scores.empty:
         return bets
+    key_b = ["season","week","team","opponent"]
+    bb = bets.copy()
+    bb["pair"] = bb.apply(lambda r: "_".join(sorted([str(r.get("team","")), str(r.get("opponent",""))])), axis=1)
+    ss = scores.copy()
+    ss["pair"] = ss.apply(lambda r: "_".join(sorted([str(r.get("home_team","")), str(r.get("away_team",""))])), axis=1)
+    merged = bb.merge(ss[["season","week","pair","score_home","score_away","home_team","away_team"]],
+                      on=["season","week","pair"], how="left")
+    def pick_score(row):
+        if str(row.get("team","")).upper() == str(row.get("home_team","")).upper():
+            return int(row["score_home"]) if pd.notna(row.get("score_home")) else None, int(row["score_away"]) if pd.notna(row.get("score_away")) else None
+        if str(row.get("team","")).upper() == str(row.get("away_team","")).upper():
+            return int(row["score_away"]) if pd.notna(row.get("score_away")) else None, int(row["score_home"]) if pd.notna(row.get("score_home")) else None
+        return None, None
+    th, to = [], []
+    for _, r in merged.iterrows():
+        a, b = pick_score(r)
+        th.append(a); to.append(b)
+    merged["team_score"] = th
+    merged["opp_score"]  = to
+    return merged
 
-    df = bets.copy()
+def _bet_card(row: pd.Series):
+    team  = row.get("team","")
+    opp   = row.get("opponent","")
+    wl    = row.get("won", None)
+    ml    = row.get("ml", row.get("decimal_odds",""))
+    stake = row.get("stake", None)
+    prof  = row.get("profit", None)
+    wlab  = row.get("week_label","")
+    sc_t  = row.get("team_score", None)
+    sc_o  = row.get("opp_score", None)
 
-    # prefer event_id join
-    if "event_id" in df.columns and "event_id" in scores.columns:
-        df = df.merge(
-            scores[["event_id","score_home","score_away","home_team","away_team"]],
-            on="event_id", how="left"
-        )
-    # fallback by teams
-    elif {"home_team","away_team"}.issubset(df.columns) and {"home_team","away_team"}.issubset(scores.columns):
-        df = df.merge(
-            scores[["home_team","away_team","score_home","score_away"]],
-            on=["home_team","away_team"], how="left"
-        )
-    # final fallback by normalized team/opponent
-    elif {"team","opponent"}.issubset(df.columns) and {"home_team","away_team"}.issubset(scores.columns):
-        m = scores.rename(columns={"home_team":"team","away_team":"opponent"})
-        df = df.merge(m[["team","opponent","score_home","score_away"]], on=["team","opponent"], how="left")
+    badge = ""
+    if wl in (0,1):
+        badge = f"<span style='padding:2px 10px;border-radius:12px;background:{'#0bb965' if wl==1 else '#e15241'};color:white;font-size:12px;'>{'WIN' if wl==1 else 'LOSS'}</span>"
 
-    return df
-
-def _render_card(row: pd.Series):
-    team = row.get("team") or row.get("home_team") or ""
-    opp  = row.get("opponent") or row.get("away_team") or ""
-    wl   = str(row.get("result_flag") or "").upper()
-    wl_badge = f'<span class="badge-win">{wl}</span>' if wl == "WIN" else (f'<span class="badge-loss">{wl}</span>' if wl == "LOSS" else "")
-    wk   = row.get("week_label", "")
-    ml   = row.get("ml")
-    stake = row.get("stake")
-    profit = row.get("profit")
-    s_h = row.get("score_home")
-    s_a = row.get("score_away")
-
-    logo_team = team_logo(team, size=40) or ""
-    logo_opp  = team_logo(opp, size=40) or ""
-
+    logo_l = team_logo(team)
+    logo_r = team_logo(opp)
     score_html = ""
-    if pd.notna(s_h) and pd.notna(s_a):
+    if logo_l and logo_r and (sc_t is not None or sc_o is not None):
         score_html = f"""
-        <div class="bet-score">
-          <div class="team">{f'<img src="{logo_team}"/>' if logo_team else ''}<div>{team}</div></div>
-          <div class="nums">{int(s_h)}&nbsp;–&nbsp;{int(s_a)}</div>
-          <div class="team"><div>{opp}</div>{f'<img src="{logo_opp}"/>' if logo_opp else ''}</div>
-        </div>
-        """
-    else:
-        score_html = f"""
-        <div class="bet-score">
-          <div class="team">{f'<img src="{logo_team}"/>' if logo_team else ''}<div>{team}</div></div>
-          <div style="opacity:.65">vs</div>
-          <div class="team"><div>{opp}</div>{f'<img src="{logo_opp}"/>' if logo_opp else ''}</div>
+        <div style="display:flex;align-items:center;gap:14px;justify-content:center;margin-top:6px;">
+          <img src="{logo_l}" style="height:54px;width:auto;" />
+          <div style="font-weight:800;font-size:22px;">{sc_t if sc_t is not None else '-' } – {sc_o if sc_o is not None else '-'}</div>
+          <img src="{logo_r}" style="height:54px;width:auto;" />
         </div>
         """
 
-    ml_txt = f"Moneyline {int(ml) if pd.notna(ml) else '—'}"
-    foot_l = ml_txt
-    foot_r = []
-    if pd.notna(stake):  foot_r.append(f"Stake ${stake:,.2f}")
-    if pd.notna(profit): foot_r.append(f"Profit ${profit:,.2f}")
-    foot_r_txt = " · ".join(foot_r) if foot_r else ""
+    odds_html  = f"<div style='font-size:12px;color:#666;'>Moneyline: {ml}</div>" if pd.notna(ml) and ml != "" else ""
+    stake_html = f"<div style='font-size:12px;color:#666;'>Stake: {stake:.2f}</div>" if stake is not None else ""
+    profit_html= f"<div style='font-size:12px;color:{'#0bb965' if (prof or 0)>=0 else '#e15241'};'>Profit: {prof:.2f}</div>" if prof is not None else ""
 
-    st.markdown(
-        f"""
-        <div class="bet-card">
-          <div class="bet-head"><div>{wk}</div><div>{wl_badge}</div></div>
-          {score_html}
-          <div class="bet-foot"><div>{foot_l}</div><div>{foot_r_txt}</div></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"""
+    <div style="border:1px solid #EEE;border-radius:12px;padding:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-weight:700;">{wlab} • {team} vs {opp}</div>
+        {badge}
+      </div>
+      {score_html}
+      <div style="display:flex;gap:16px;justify-content:center;margin-top:8px;">
+        {odds_html}{stake_html}{profit_html}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-def render(year: int):
-    st.markdown(CARD_CSS, unsafe_allow_html=True)
-
-    df = load_ledger(year)
-    if df.empty:
+def render(season: int, stage: str):
+    bets = load_bets(season)
+    if bets.empty:
         st.info("No bets for this season.")
         return
 
-    df = _standardize(df)
-    df = _merge_scores(df, year)
-    df = week_sort_key(df).sort_values("week_order", kind="stable")
+    scores = load_scores_for_bets(season)
+    bets = _merge_scores(week_sort_key(bets), scores)
+    bets = bets.sort_values(["week_order","schedule_date"]).reset_index(drop=True)
 
-    # grid responsiva: 3 columnas en desktop
-    cols_per_row = 3
-    rows = [df.iloc[i:i+cols_per_row] for i in range(0, len(df), cols_per_row)]
-    for chunk in rows:
-        cols = st.columns(len(chunk))
-        for col, (_, row) in zip(cols, chunk.iterrows()):
-            with col:
-                _render_card(row)
+    cols = st.columns(3)
+    for i, (_, r) in enumerate(bets.iterrows()):
+        with cols[i % 3]:
+            _bet_card(r)
