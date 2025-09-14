@@ -2,7 +2,6 @@ name: update_odds_weekly
 
 on:
   schedule:
-    # Miércoles 15:05 UTC (~09:05 CDMX)
     - cron: "5 15 * * 3"
   workflow_dispatch:
     inputs:
@@ -26,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - uses: actions/setup-python@v5
         with:
@@ -41,7 +42,6 @@ jobs:
           mkdir -p data/live
           mkdir -p data/archive
 
-      # 🔎 Verifica que el secret con TU nombre exista (no imprime su valor)
       - name: Debug secret presence
         run: |
           if [ -z "${{ secrets.ODDS_API_KEY }}" ]; then
@@ -51,10 +51,9 @@ jobs:
             echo "✅ ODDS_API_KEY secret is present."
           fi
 
-      # 🔎 Verifica el mapeo del secret -> env var que usará el script
       - name: Debug env var mapping
         env:
-            ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
           if [ -z "$ODDS_API_KEY" ]; then
             echo "❌ ODDS_API_KEY env var is empty."
@@ -81,6 +80,13 @@ jobs:
             ${WEEK:+--week "$WEEK"} \
             $( [ "$ARCHIVE_FORCE" = "true" ] && echo "--archive-force" )
 
+      - name: Show live file
+        run: |
+          echo "==== ls data/live ===="
+          ls -lah data/live || true
+          echo "==== head odds.csv ===="
+          [ -f data/live/odds.csv ] && head -n 20 data/live/odds.csv || echo "odds.csv not found"
+
       - name: Upload artifact (odds-live)
         uses: actions/upload-artifact@v4
         with:
@@ -89,8 +95,11 @@ jobs:
 
       - name: Commit & push
         run: |
+          set -e
           git config user.name  "github-actions"
           git config user.email "actions@users.noreply.github.com"
-          git add data/live/odds.csv data/archive/** || true
+          git add -f data/live/odds.csv
+          git add -A data/archive || true
+          git status
           git commit -m "chore(data): refresh odds live (and archive if season ended) [skip ci]" || echo "no changes"
           git push || true
