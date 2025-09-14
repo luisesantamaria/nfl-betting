@@ -180,13 +180,13 @@ def apply_price_factor(parsed: pd.DataFrame, factor: float) -> pd.DataFrame:
     out = parsed.copy()
     for side in ("home", "away"):
         dr = f"decimal_{side}_raw"
-        mr = f"ml_{side}_raw"
         if dr in out.columns:
             out[f"decimal_{side}"] = out[dr].astype(float) / float(factor)
             out[f"ml_{side}"] = out[f"decimal_{side}"].apply(decimal_to_american)
         else:
             out[f"decimal_{side}"] = np.nan
             out[f"ml_{side}"] = np.nan
+        mr = f"ml_{side}_raw"
         if mr not in out.columns:
             out[mr] = out[f"decimal_{side}"].apply(decimal_to_american)
     out["price_factor"] = float(factor)
@@ -248,7 +248,7 @@ def main():
     ap.add_argument("--sport", type=str, default="americanfootball_nfl")
     ap.add_argument("--regions", type=str, default="us")
     ap.add_argument("--markets", type=str, default="h2h,spreads,totals")
-    ap.add_argument("--only-current-week", action="store_true", default=True)
+    ap.add_argument("--only-current-week", dest="only_current_week", action="store_true", default=True)
     ap.add_argument("--season", type=int, default=None)
     ap.add_argument("--week", type=int, default=None)
     ap.add_argument("--price-factor", type=float, default=float(os.environ.get("ODDS_PRICE_FACTOR", "1.022")))
@@ -256,6 +256,18 @@ def main():
     ap.add_argument("--no-archive-on-season-end", dest="archive_on_season_end", action="store_false")
     ap.add_argument("--archive-force", action="store_true", default=False)
     args = ap.parse_args()
+
+    live_path = args.live_file
+    os.makedirs(os.path.dirname(live_path), exist_ok=True)
+
+    cur_season, cur_week, cur_label = current_season_week()
+    print(f"[odds] now → season={cur_season}, week={cur_week} ({cur_label})")
+
+    if pd.isna(cur_week):
+        print("[odds] offseason or preseason detected → skip fetch.")
+        if args.archive_force or args.archive_on_season_end:
+            archive_if_needed(live_path, args.archive_dir, force=args.archive_force)
+        return
 
     api_key = os.environ.get("ODDS_API_KEY", "").strip()
     if not api_key:
@@ -289,8 +301,6 @@ def main():
         parsed = apply_price_factor(parsed, args.price_factor)
         parsed = parsed.reindex(columns=col_order)
 
-    live_path = args.live_file
-    os.makedirs(os.path.dirname(live_path), exist_ok=True)
     if os.path.exists(live_path):
         try:
             prev = pd.read_csv(live_path, low_memory=False)
@@ -313,13 +323,8 @@ def main():
             combined.loc[mask, "week"] = [w for (w, lbl) in w2]
             combined.loc[mask, "week_label"] = [lbl for (w, lbl) in w2]
 
-    cur_season, cur_week, cur_label = current_season_week()
-    print(f"[odds] now → season={cur_season}, week={cur_week} ({cur_label})")
     target_season = args.season if args.season is not None else cur_season
     target_week = args.week if args.week is not None else cur_week
-
-    if args.only-current-week:
-        pass  # placeholder to avoid hyphen in attribute name
 
     if args.only_current_week and pd.notna(target_week):
         before = len(combined)
