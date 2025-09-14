@@ -1,102 +1,77 @@
 import pandas as pd
-import streamlit as st
-from .paths import ODDS_DIRS
-from .utils import norm_abbr, week_label_to_num
+from .data_io import load_odds_for_season
+from .utils import norm_abbr
 
-def _candidate_odds_files(year: int):
-    names = [
-        f"odds_season_{year}.csv",
-        f"target_odds_{year}.csv",
-        f"targets_odds_{year}.csv",
-        "target_odds.csv",
-        "targets_odds.csv",
-        "historical_odds.csv",
-    ]
-    for d in ODDS_DIRS:
-        for n in names:
-            p = d / n
-            if p.exists(): yield p
-        for p in d.glob(f"*odds*{year}*.csv"):
-            yield p
+def _pair(a: str, b: str) -> str:
+    a = str(a).upper().strip()
+    b = str(b).upper().strip()
+    return f"{a}_{b}" if a < b else f"{b}_{a}"
 
-@st.cache_data
-def load_scores_table(year: int) -> pd.DataFrame:
-    frames = []
-    seen = set()
-    for p in _candidate_odds_files(year):
-        key = p.resolve().as_posix()
-        if key in seen: continue
-        seen.add(key)
-        try:
-            df = pd.read_csv(p, low_memory=False)
-        except Exception:
-            continue
-        need = {"home_team","away_team","week","season"}
-        if not need.issubset(set(df.columns)): continue
+def enrich_bets_with_scores(bets: pd.DataFrame, season: int) -> pd.DataFrame:
+    if bets is None or bets.empty:
+        return bets
+    o = load_odds_for_season(season)
+    if o.empty:
+        return bets
 
-        df = df.copy()
-        for c in ("home_team","away_team"):
-            df[c] = df[c].astype(str).map(norm_abbr)
-        df["season"] = pd.to_numeric(df["season"], errors="coerce").astype("Int64")
-        df["week"]   = pd.to_numeric(df["week"], errors="coerce").astype("Int64")
-        if "schedule_date" in df.columns:
-            df["schedule_date"] = pd.to_datetime(df["schedule_date"], errors="coerce")
-
-        df = df[df["season"].astype("Int64").eq(year)]
-        if df.empty: continue
-
-        df["pair"] = [f"{a}_{b}" if a < b else f"{b}_{a}" for a,b in zip(df["home_team"], df["away_team"])]
-
-        keep = ["season","week","home_team","away_team","pair",
-                "score_home","score_away","schedule_date"]
-        keep = [c for c in keep if c in df.columns]
-        frames.append(df[keep])
-
-    if not frames:
-        return pd.DataFrame(columns=["season","week","home_team","away_team","pair","score_home","score_away","schedule_date"])
-
-    out = pd.concat(frames, ignore_index=True)
-    out = (out.sort_values(["season","week","schedule_date"])
-              .drop_duplicates(subset=["season","week","pair"], keep="last"))
-    return out
-
-def ensure_week_num_column(df: pd.DataFrame) -> pd.DataFrame:
-    x = df.copy()
-    if "wk_num" not in x.columns:
-        if "week" in x.columns and pd.api.types.is_numeric_dtype(x["week"]):
-            x["wk_num"] = pd.to_numeric(x["week"], errors="coerce").astype("Int64")
-        elif "week_label" in x.columns:
-            x["wk_num"] = x["week_label"].apply(week_label_to_num).astype("Int64")
-        else:
-            x["wk_num"] = pd.Series([None]*len(x), dtype="Int64")
-    return x
-
-@st.cache_data
-def enrich_bets_with_scores(bets_df: pd.DataFrame, year: int) -> pd.DataFrame:
-    if bets_df.empty: return bets_df
-    b = bets_df.copy()
-    for c in ("team","opponent"):
-        if c in b.columns:
-            b[c] = b[c].astype(str).map(norm_abbr)
-    b = ensure_week_num_column(b)
-    b["pair"] = [f"{a}_{o}" if a < o else f"{o}_{a}" for a,o in zip(b.get("team",""), b.get("opponent",""))]
-
-    scores = load_scores_table(year)
-    if scores.empty: return b
-
-    merged = b.merge(
-        scores,
-        left_on=["season","wk_num","pair"],
-        right_on=["season","week","pair"],
-        how="left",
-        suffixes=("","_sc")
-    )
-    if "schedule_date" not in b.columns and "schedule_date_sc" in merged.columns:
-        merged["schedule_date"] = merged["schedule_date_sc"]
+    # normaliza
     for c in ("home_team","away_team"):
-        if c not in merged.columns and f"{c}_sc" in merged.columns:
-            merged[c] = merged[f"{c}_sc"]
+        if c in o.columns:
+            o[c] = o[c].astype(str).map(norm_abbr)
+    odds = o.copy()
+    odds["pair"] = [_pair(h, a) for h, a in zip(odds.get("home_team"), odds.get("away_team"))]
+    if "week_label" not in odds.columns and "week" in odds.columns:
+        def wl(n):
+            try:
+                n = int(n)
+            except:
+                return "Week 999"
+            if 1 <= n <= 18:
+                return f"Week {n}"
+            return {19:"Wild Card",20:"Divisional",21:"Conference",22:"Super Bowl"}.get(n, f"Week {n}")
+        odds["week_label"] = odds["week"].apply(wl)
 
-    drop_cols = [c for c in merged.columns if c.endswith("_sc")] + ["week_y"]
-    merged = merged.rename(columns={"week_x":"week"}).drop(columns=[c for c in drop_cols if c in merged.columns], errors="ignore")
-    return merged
+    view = bets.copy()
+    for c in ("team","opponent"):
+        if c in view.columns:
+            view[c] = view[c].astype(str).map(norm_abbr)
+    view["pair"] = [_pair(t, o) for t, o in zip(view.get("team"), view.get("opponent"))]
+
+    keys = ["pair", "week_label"]
+    cols_keep = ["score_home","score_away","home_team","away_team","schedule_date"]
+    m = view.merge(odds[keys + cols_keep], on=keys, how="left", validate="m:1")
+
+    # construir marcador alineando lados
+    def mk_score(row):
+        sh, sa = row.get("score_home"), row.get("score_away")
+        if pd.isna(sh) or pd.isna(sa):
+            return None
+        # quién es "team" respecto a home/away
+        t, h, a = row.get("team"), row.get("home_team"), row.get("away_team")
+        if str(t).upper().strip() == str(h).upper().strip():
+            # team es local
+            return f"{int(sh)} — {int(sa)}"
+        elif str(t).upper().strip() == str(a).upper().strip():
+            return f"{int(sa)} — {int(sh)}"
+        else:
+            # no pudimos alinear; mostrar como home-away
+            return f"{int(sh)} — {int(sa)}"
+
+    m["scoreline"] = m.apply(mk_score, axis=1)
+
+    # si falta 'won' y tenemos score, computarlo
+    if "won" not in m.columns and "score_home" in m.columns and "score_away" in m.columns:
+        def calc_won(row):
+            sh, sa = row.get("score_home"), row.get("score_away")
+            if pd.isna(sh) or pd.isna(sa):
+                return None
+            t, h, a = row.get("team"), row.get("home_team"), row.get("away_team")
+            home_won = int(sh > sa)
+            if str(t).upper().strip() == str(h).upper().strip():
+                return home_won
+            elif str(t).upper().strip() == str(a).upper().strip():
+                return 1 - home_won
+            return None
+        m["won"] = m.apply(calc_won, axis=1)
+
+    return m
