@@ -2,23 +2,35 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 from .paths import ARCHIVE_DIR, BETSWEEK_DIR
-from .utils import norm_abbr, american_to_decimal
+from .utils import norm_abbr, american_to_decimal, season_stage
 from .config import SEASON_RULES
 
 def list_available_seasons():
-    seasons = []
+    years_from_archive = []
     for d in sorted(ARCHIVE_DIR.glob("season=*")):
         try:
             y = int(str(d.name).split("=")[1])
         except Exception:
             continue
-        # considera season si existe al menos uno de estos archivos
-        if any((d / n).exists() for n in ("pnl.csv", "bets.csv", "odds.csv", "stats.csv")):
-            seasons.append(y)
-    # incluye reglas fijas si las hay
-    for y in SEASON_RULES:
-        seasons.append(y)
-    return sorted(set(seasons))
+        years_from_archive.append(y)
+
+    candidates = sorted(set(years_from_archive).union(set(SEASON_RULES.keys())))
+    out = []
+    for y in candidates:
+        season_dir = ARCHIVE_DIR / f"season={y}"
+        has_bets = (season_dir / "bets.csv").exists()
+        has_pnl  = (season_dir / "pnl.csv").exists()
+
+        if has_bets or has_pnl:
+            out.append(y)
+            continue
+
+        pnl_df = load_pnl_weekly(y)  # no falla si no existe
+        stg = season_stage(y, pnl_df)
+        if stg in {"preseason", "in_season"}:
+            out.append(y)
+
+    return sorted(set(out))
 
 @st.cache_data
 def load_pnl_weekly(year: int) -> pd.DataFrame:
@@ -30,7 +42,6 @@ def load_pnl_weekly(year: int) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     if "week_label" not in df.columns:
-        # fallback básico si no viene etiqueta
         def _lab(n):
             try:
                 n = int(n)
@@ -38,7 +49,7 @@ def load_pnl_weekly(year: int) -> pd.DataFrame:
                 return "Week 999"
             if 1 <= n <= 18:
                 return f"Week {n}"
-            return {19:"Wild Card",20:"Divisional",21:"Conference",22:"Super Bowl"}.get(n, f"Week {n}")
+            return {19: "Wild Card", 20: "Divisional", 21: "Conference", 22: "Super Bowl"}.get(n, f"Week {n}")
         if "week" in df.columns:
             df["week_label"] = df["week"].apply(_lab)
         else:
@@ -55,27 +66,22 @@ def load_ledger(year: int) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.read_csv(p, low_memory=False)
 
-    # season
     if "season" not in df.columns:
         df["season"] = year
     else:
         df["season"] = pd.to_numeric(df["season"], errors="coerce").fillna(year).astype(int)
 
-    # numéricos comunes
     for col in ("decimal_odds", "ml", "stake", "profit", "model_prob", "edge", "ev"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # si solo hay ml, crea decimal_odds
     if "decimal_odds" not in df.columns and "ml" in df.columns:
         df["decimal_odds"] = df["ml"].apply(american_to_decimal)
 
-    # normaliza equipos
     for c in ("team", "opponent", "home_team", "away_team"):
         if c in df.columns:
             df[c] = df[c].astype(str).map(norm_abbr)
 
-    # fechas
     if "schedule_date" in df.columns:
         df["schedule_date"] = pd.to_datetime(df["schedule_date"], errors="coerce")
 
@@ -101,7 +107,7 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
                         return "Week 999"
                     if 1 <= n <= 18:
                         return f"Week {n}"
-                    return {19:"Wild Card",20:"Divisional",21:"Conference",22:"Super Bowl"}.get(n, f"Week {n}")
+                    return {19: "Wild Card", 20: "Divisional", 21: "Conference", 22: "Super Bowl"}.get(n, f"Week {n}")
                 df["week_label"] = df["week"].apply(week_label_from_num)
             for c in ("team", "opponent"):
                 if c in df.columns:
@@ -110,3 +116,4 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
                 df["schedule_date"] = pd.to_datetime(df["schedule_date"], errors="coerce")
             return df
     return pd.DataFrame()
+
