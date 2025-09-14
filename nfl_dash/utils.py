@@ -1,110 +1,72 @@
-from __future__ import annotations
-from datetime import date, timedelta
-from typing import Optional, Dict
-import numpy as np
 import pandas as pd
 
-ORDER_LABELS = [f"Week {i}" for i in range(1, 19)] + ["Wild Card", "Divisional", "Conference", "Super Bowl"]
-ORDER_INDEX: Dict[str, int] = {lab: i for i, lab in enumerate(ORDER_LABELS)}
+ORDER_LABELS = [f"Week {i}" for i in range(1,19)] + ["Wild Card","Divisional","Conference","Super Bowl"]
+ORDER_INDEX  = {lab:i for i,lab in enumerate(ORDER_LABELS)}
 
-def week_label_from_num(n: int) -> str:
-    try:
-        n = int(n)
-    except Exception:
-        return "Week 999"
-    if 1 <= n <= 18:
-        return f"Week {n}"
-    return {19: "Wild Card", 20: "Divisional", 21: "Conference", 22: "Super Bowl"}.get(n, f"Week {n}")
-
-def week_sort_key(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    if "week_label" in out.columns:
-        out["week_label"] = out["week_label"].astype(str)
-    elif "week" in out.columns:
-        out["week_label"] = out["week"].apply(week_label_from_num).astype(str)
-    else:
-        out["week_label"] = "Week 999"
-    out["week_order"] = out["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
-    return out
-
-def american_to_decimal(m: Optional[float]) -> float:
-    if m is None or (isinstance(m, float) and np.isnan(m)):
-        return np.nan
-    m = float(m)
-    return 1.0 + (100.0 / abs(m) if m < 0 else m / 100.0)
-
-def decimal_to_american(d: Optional[float]) -> float:
-    if d is None or (isinstance(d, float) and np.isnan(d)):
-        return np.nan
-    d = float(d)
-    return round((d - 1.0) * 100.0, 0) if d >= 2.0 else round(-100.0 / (d - 1.0), 0)
-
-_TEAM_FIX = {
-    "STL": "LA", "LAR": "LA", "SD": "LAC", "SDG": "LAC", "OAK": "LV", "LVR": "LV", "WSH": "WAS", "JAC": "JAX",
-    "GNB": "GB", "KAN": "KC", "NWE": "NE", "NOR": "NO", "SFO": "SF", "TAM": "TB",
-    "ARIZONA CARDINALS": "ARI","ATLANTA FALCONS":"ATL","BALTIMORE RAVENS":"BAL","BUFFALO BILLS":"BUF",
-    "CAROLINA PANTHERS":"CAR","CHICAGO BEARS":"CHI","CINCINNATI BENGALS":"CIN","CLEVELAND BROWNS":"CLE",
-    "DALLAS COWBOYS":"DAL","DENVER BRONCOS":"DEN","DETROIT LIONS":"DET","GREEN BAY PACKERS":"GB",
-    "HOUSTON TEXANS":"HOU","INDIANAPOLIS COLTS":"IND","JACKSONVILLE JAGUARS":"JAX","KANSAS CITY CHIEFS":"KC",
-    "LOS ANGELES RAMS":"LA","LOS ANGELES CHARGERS":"LAC","LAS VEGAS RAIDERS":"LV","MIAMI DOLPHINS":"MIA",
-    "MINNESOTA VIKINGS":"MIN","NEW ENGLAND PATRIOTS":"NE","NEW ORLEANS SAINTS":"NO","NEW YORK GIANTS":"NYG",
-    "NEW YORK JETS":"NYJ","PHILADELPHIA EAGLES":"PHI","PITTSBURGH STEELERS":"PIT","SEATTLE SEAHAWKS":"SEA",
-    "SAN FRANCISCO 49ERS":"SF","TAMPA BAY BUCCANEERS":"TB","TENNESSEE TITANS":"TEN","WASHINGTON COMMANDERS":"WAS",
-    "LA":"LA","LAC":"LAC","LV":"LV","WAS":"WAS","ARI":"ARI","ATL":"ATL","BAL":"BAL","BUF":"BUF","CAR":"CAR","CHI":"CHI",
-    "CIN":"CIN","CLE":"CLE","DAL":"DAL","DEN":"DEN","DET":"DET","GB":"GB","HOU":"HOU","IND":"IND","JAX":"JAX","KC":"KC",
-    "MIA":"MIA","MIN":"MIN","NE":"NE","NO":"NO","NYG":"NYG","NYJ":"NYJ","PHI":"PHI","PIT":"PIT","SEA":"SEA","SF":"SF",
-    "TB":"TB","TEN":"TEN",
+TEAM_FIX = {
+    "STL":"LA","LAR":"LA","SD":"LAC","SDG":"LAC","OAK":"LV","LVR":"LV",
+    "WSH":"WAS","JAC":"JAX","GNB":"GB","KAN":"KC","NWE":"NE","NOR":"NO","SFO":"SF","TAM":"TB",
+    "LA RAMS":"LA","LOS ANGELES RAMS":"LA","SAN DIEGO CHARGERS":"LAC","OAKLAND RAIDERS":"LV",
 }
 
 def norm_abbr(s: str) -> str:
-    if s is None:
-        return ""
-    t = str(s).strip().upper()
-    return _TEAM_FIX.get(t, t)
+    s = str(s).upper().strip()
+    return TEAM_FIX.get(s, s)
 
-_ESPN_SLUG = {
-    "ARI":"ari","ATL":"atl","BAL":"bal","BUF":"buf","CAR":"car","CHI":"chi","CIN":"cin","CLE":"cle",
-    "DAL":"dal","DEN":"den","DET":"det","GB":"gnb","HOU":"hou","IND":"ind","JAX":"jax","KC":"kan",
-    "LA":"lar","LAC":"lac","LV":"rai","MIA":"mia","MIN":"min","NE":"nwe","NO":"nor","NYG":"nyg",
-    "NYJ":"nyj","PHI":"phi","PIT":"pit","SEA":"sea","SF":"sfo","TB":"tam","TEN":"ten","WAS":"wsh",
-}
-
-def team_logo(team: str) -> Optional[str]:
-    abbr = norm_abbr(team)
-    slug = _ESPN_SLUG.get(abbr)
-    if not slug:
+def american_to_decimal(m):
+    if m is None:
         return None
-    return f"https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/{slug}.png"
+    try:
+        m = float(m)
+    except:
+        return None
+    return 1 + (100/abs(m) if m < 0 else m/100)
 
-def _labor_day(year: int) -> date:
-    d = date(year, 9, 1)
-    while d.weekday() != 0:
-        d += timedelta(days=1)
-    return d
+def add_week_order(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "week_label" not in out.columns and "week" in out.columns:
+        def wl(n):
+            try:
+                n = int(n)
+            except:
+                return "Week 999"
+            if 1 <= n <= 18:
+                return f"Week {n}"
+            return {19:"Wild Card",20:"Divisional",21:"Conference",22:"Super Bowl"}.get(n, f"Week {n}")
+        out["week_label"] = out["week"].apply(wl)
+    out["week_label"] = out["week_label"].astype(str)
+    out["week_order"] = out["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+    return out
 
-def _super_bowl_sunday(season: int) -> date:
-    y = season + 1
-    d = date(y, 2, 1)
-    while d.weekday() != 6:
-        d += timedelta(days=1)
-    d += timedelta(days=7)
-    return d
+def kpis_from_pnl(pnl: pd.DataFrame):
+    profits = pd.to_numeric(pnl.get("profit"), errors="coerce").fillna(0.0)
+    stakes  = pd.to_numeric(pnl.get("stake"), errors="coerce").fillna(0.0)
+    bank    = pd.to_numeric(pnl.get("bankroll"), errors="coerce")
+    initial_bankroll = float(bank.dropna().iloc[0]) if bank.dropna().size else 0.0
+    final_bankroll   = float(bank.dropna().iloc[-1]) if bank.dropna().size else initial_bankroll
+    total_profit     = float(profits.sum())
+    total_stake      = float(stakes.sum())
+    yield_pct        = float(100.0 * total_profit / total_stake) if total_stake > 0 else 0.0
+    return initial_bankroll, final_bankroll, total_profit, total_stake, yield_pct, profits, stakes
 
-def _week1_thursday(season: int) -> pd.Timestamp:
-    ld = _labor_day(season)
-    thu = ld + timedelta(days=3)
-    return pd.Timestamp(thu).tz_localize("UTC")
+def season_stage(year: int, pnl_df: pd.DataFrame) -> str:
+    # clasificación robusta por fecha actual
+    now_ts = pd.Timestamp.now(tz="UTC")
+    # Heurística de calendario NFL: inicio REG ~ segundo jueves de septiembre; fin ~ mediados de febrero
+    reg_start = pd.Timestamp(year=year, month=9, day=1, tz="UTC")
+    # desplazar al segundo jueves
+    dow = reg_start.weekday()  # 0=Mon ... 3=Thu
+    days_to_thu = (3 - dow) % 7
+    first_thu = reg_start + pd.Timedelta(days=days_to_thu)
+    second_thu = first_thu + pd.Timedelta(days=7)
+    regular_start = second_thu
+    season_end = pd.Timestamp(year=year+1, month=2, day=15, tz="UTC")
 
-def season_stage(season: int, pnl: pd.DataFrame | None = None) -> str:
-    # FIX: usar timestamp "aware" directamente
-    now_ts   = pd.Timestamp.now(tz="UTC")
-    start_ts = _week1_thursday(season)
-    end_ts   = pd.Timestamp(_super_bowl_sunday(season)).tz_localize("UTC") + pd.Timedelta(days=1)
-    if pnl is not None and not pnl.empty and "week_label" in pnl.columns:
-        if "Super Bowl" in set(map(str, pnl["week_label"].dropna().tolist())):
-            return "Season Ended"
-    if now_ts < start_ts:
-        return "Preseason"
-    if now_ts >= end_ts:
-        return "Season Ended"
-    return "In Season"
+    if now_ts < regular_start:
+        return "preseason"
+    if now_ts > season_end:
+        return "ended"
+    # Si la serie PnL llega al Super Bowl, marcamos ended
+    if "week_label" in pnl_df.columns and pnl_df["week_label"].astype(str).str.contains("Super Bowl").any():
+        return "ended"
+    return "in_season"
