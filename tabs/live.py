@@ -1,4 +1,6 @@
+# tabs/live.py
 import math
+import requests
 import pandas as pd
 import streamlit as st
 
@@ -12,6 +14,24 @@ SUNDAY_ORDER = ["Sun 1:00 PM", "Sun 4:05 PM", "Sun 4:25 PM", "Sun 8:20 PM", "Sun
 
 
 # -------------------- helpers de semana --------------------
+def _espn_current_week(season: int) -> int | None:
+    """
+    Pregunta a ESPN la semana 'actual'. Suele devolver el número correcto
+    incluso de madrugada del domingo. Si no viene, devuelve None.
+    """
+    url = f"https://site.api.espn.com/apis/v2/sports/football/nfl/scoreboard?dates={season}"
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        j = r.json()
+        wk = (j.get("week") or {}).get("number")
+        if isinstance(wk, int) and 1 <= wk <= 22:
+            return wk
+    except Exception:
+        pass
+    return None
+
+
 def _tuesday_anchor_et(ts_et: pd.Timestamp) -> pd.Timestamp:
     """Devuelve el martes 00:00 ET de la semana de ts_et."""
     if ts_et.tz is None:
@@ -24,10 +44,10 @@ def _tuesday_anchor_et(ts_et: pd.Timestamp) -> pd.Timestamp:
     return anchor
 
 
-def _guess_current_week(season: int) -> int:
+def _guess_current_week_by_rules(season: int) -> int:
     """
-    Semana NFL con corte martes 00:00 ET.
-    Usamos regular_start (kickoff TNF week 1) para construir el ancla del martes de esa semana.
+    Semana NFL con corte martes 00:00 ET, anclada al kickoff de Week 1
+    definido en SEASON_RULES[season]['regular_start'].
     """
     rules = SEASON_RULES.get(int(season), {})
     regular_start = rules.get("regular_start", None)
@@ -47,17 +67,27 @@ def _guess_current_week(season: int) -> int:
         return 1
 
     delta_days = (now_et - week1_tue).days
-    # cada bloque de 7 días sube una semana
     week = int(delta_days // 7) + 1
     return max(1, min(22, week))
 
 
+def _detect_week(season: int) -> int:
+    """
+    1) Intento con ESPN (current week).
+    2) Si falla, cálculo por reglas (martes→lunes).
+    """
+    espn_w = _espn_current_week(season)
+    if espn_w:
+        return int(espn_w)
+    return _guess_current_week_by_rules(season)
+
+
 def _pick_week_and_fetch(season: int):
     """
-    Preferimos: w (semana detectada), si vacío probamos w+1 (próxima),
-    y sólo si ambos vacíos, w-1 (semana previa).
+    Usamos la semana detectada; si por alguna razón ESPN aún no publica
+    la semana (lista vacía), probamos w+1 y, en último caso, w-1.
     """
-    w = _guess_current_week(season)
+    w = _detect_week(season)
     for cand in [w, min(22, w + 1), max(1, w - 1)]:
         df = fetch_espn_scoreboard_df(int(season), int(cand))
         if not df.empty:
@@ -183,11 +213,10 @@ def render(season: int):
     df["sub"] = df["start_time"].apply(_sunday_subbucket)
     df["sub"] = pd.Categorical(df["sub"], categories=SUNDAY_ORDER, ordered=True)
 
-    # Orden: día → hora (Thursday primero, etc.)
+    # Orden: día → hora
     df = df.sort_values(["bucket", "start_time"], ascending=[True, True])
 
-    # Encabezado con semana detectada (útil para depurar rápidamente)
-    st.caption(f"Showing Week {week} (auto-detected, Tue 00:00 ET cutoff)")
+    st.caption(f"Showing Week {week} (ESPN-driven, Tue 00:00 ET fallback)")
 
     for day in [d for d in DAY_ORDER if (df["bucket"] == d).any()]:
         st.markdown(f"### {day}")
