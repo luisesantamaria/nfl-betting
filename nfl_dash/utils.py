@@ -96,7 +96,8 @@ def _week1_thursday(season: int) -> pd.Timestamp:
     return pd.Timestamp(thu).tz_localize("UTC")
 
 def season_stage(season: int, pnl: pd.DataFrame | None = None) -> str:
-    now_ts   = pd.Timestamp.utcnow().tz_localize("UTC")
+    # FIX: usar timestamp "aware" directamente
+    now_ts   = pd.Timestamp.now(tz="UTC")
     start_ts = _week1_thursday(season)
     end_ts   = pd.Timestamp(_super_bowl_sunday(season)).tz_localize("UTC") + pd.Timedelta(days=1)
     if pnl is not None and not pnl.empty and "week_label" in pnl.columns:
