@@ -1,3 +1,4 @@
+# tabs/live.py
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta, timezone
@@ -29,21 +30,18 @@ def _autodetect_week(season: int, now_utc: datetime | None = None) -> int:
         now_utc = datetime.now(timezone.utc)
     now_et  = now_utc.astimezone(ET)
     anchor  = _tuesday_anchor_et(season)
-    if now_et < anchor:
-        wk = 1
-    else:
-        wk = int(((now_et - anchor).days // 7) + 1)
+    wk = 1 if now_et < anchor else int(((now_et - anchor).days // 7) + 1)
     return max(1, min(22, wk))
 
-def _day_bucket(et_dt: pd.Timestamp) -> str:
-    d = et_dt.tz_convert(ET)
+def _day_bucket(et_ts: pd.Timestamp) -> str:
+    d = et_ts.tz_convert(ET)
     return {3:"Thursday", 5:"Saturday", 6:"Sunday", 0:"Monday"}.get(d.weekday(), d.strftime("%A"))
 
-def _sun_slot(et_dt: pd.Timestamp) -> tuple[int, str]:
-    d = et_dt.tz_convert(ET)
-    label = f"Sun {d.strftime('%-I:%M %p') if hasattr(d, 'strftime') else d.strftime('%I:%M %p').lstrip('0')}"
-    order = d.hour * 60 + d.minute
-    return order, label
+def _sun_slot(et_ts: pd.Timestamp) -> tuple[int, str]:
+    d = et_ts.tz_convert(ET)
+    # Hora sin cero a la izquierda (portable)
+    label = d.strftime("%I:%M %p").lstrip("0")
+    return d.hour * 60 + d.minute, f"Sun {label}"
 
 def render(season: int):
     # Week autodetect 100% calendario
@@ -54,15 +52,14 @@ def render(season: int):
         f"""
         <div style="
             display:flex;align-items:center;gap:.6rem;
-            margin: .25rem 0 1rem 0;
+            margin:.25rem 0 1rem 0;
         ">
           <div style="font-size:1.25rem;font-weight:800;letter-spacing:.2px;">Live</div>
           <div style="
               padding:.15rem .65rem;border-radius:999px;
               border:1px solid rgba(255,255,255,.12);
               background:rgba(255,255,255,.04);
-              font-weight:800;letter-spacing:.4px;
-              font-size:.95rem;
+              font-weight:800;letter-spacing:.4px;font-size:.95rem;
           ">Week {week}</div>
         </div>
         """,
@@ -83,13 +80,22 @@ def render(season: int):
     df["start_time"] = pd.to_datetime(df["start_time"], errors="coerce", utc=True)
     df["start_et"]   = df["start_time"].dt.tz_convert(ET)
     df["state"]      = df["state"].astype(str).str.lower()   # 'pre' | 'in' | 'post'
-    df["day_bucket"] = df["start_et"].apply(lambda x: _day_bucket(x))
+    df["day_bucket"] = df["start_et"].apply(_day_bucket)
     df["is_live"]    = df["state"].eq("in")
 
+    # Auto-refresh solo si hay juegos en vivo
+    if df["is_live"].any():
+        try:
+            from streamlit_extras.st_autorefresh import st_autorefresh
+            st_autorefresh(interval=60_000, key=f"live_autorefresh_{season}_{week}")
+        except Exception:
+            pass  # si no está instalado, seguimos sin auto-refresh
+
+    # Orden: día (Thu, Sat, Sun, Mon) → en vivo primero → hora
     day_order = {"Thursday": 1, "Saturday": 2, "Sunday": 3, "Monday": 4}
     df["__day_ord"]  = df["day_bucket"].map(day_order).fillna(99)
     df["__kick_ord"] = df["start_et"].apply(lambda x: x.hour * 60 + x.minute)
-    df["__live_ord"] = (~df["is_live"]).astype(int)  # live first
+    df["__live_ord"] = (~df["is_live"]).astype(int)  # live primero
     df = df.sort_values(["__day_ord", "__live_ord", "start_et"])
 
     # Render por secciones
@@ -101,14 +107,12 @@ def render(season: int):
         st.markdown(f"### {day_name}")
 
         if day_name == "Sunday":
-            day_df = day_df.copy()
-            tmp = day_df["start_et"].apply(_sun_slot)
-            day_df["__slot_ord"] = [t[0] for t in tmp]
-            day_df["__slot_lab"] = [t[1] for t in tmp]
-            for slot_ord in sorted(day_df["__slot_ord"].unique()):
-                g = day_df[day_df["__slot_ord"].eq(slot_ord)]
-                if g.empty:
-                    continue
+            dd = day_df.copy()
+            slots = dd["start_et"].apply(_sun_slot)
+            dd["__slot_ord"] = [s[0] for s in slots]
+            dd["__slot_lab"] = [s[1] for s in slots]
+            for slot in sorted(dd["__slot_ord"].unique()):
+                g = dd[dd["__slot_ord"].eq(slot)]
                 st.markdown(f"**{g.iloc[0]['__slot_lab']}**")
                 cards = list(g.itertuples(index=False))
                 idx = 0
