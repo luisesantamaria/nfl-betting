@@ -1,120 +1,143 @@
 from __future__ import annotations
-import re
-from typing import Dict, Optional, Tuple
+import math
+from pathlib import Path
+import pandas as pd
+from typing import Dict, Any
 
-# -----------------------------
-# Normalización de equipos
-# -----------------------------
+from .config import SEASON_RULES  # puede estar vacío; calculamos defaults si falta
 
-# Abreviaturas “estándar” internas (3 letras, mayúsculas)
-_STD_ABBR: Dict[str, str] = {
-    # NFC
-    "ARIZONA CARDINALS": "ARI", "ARI": "ARI", "ARZ": "ARI",
-    "ATLANTA FALCONS": "ATL", "ATL": "ATL",
-    "CAROLINA PANTHERS": "CAR", "CAR": "CAR",
-    "CHICAGO BEARS": "CHI", "CHI": "CHI",
-    "DALLAS COWBOYS": "DAL", "DAL": "DAL",
-    "DETROIT LIONS": "DET", "DET": "DET",
-    "GREEN BAY PACKERS": "GB", "GNB": "GB", "GB": "GB",
-    "LOS ANGELES RAMS": "LAR", "LA RAMS": "LAR", "ST. LOUIS RAMS": "LAR", "LAR": "LAR", "LA": "LAR",
-    "MINNESOTA VIKINGS": "MIN", "MIN": "MIN",
-    "NEW ORLEANS SAINTS": "NO", "NOR": "NO", "NO": "NO",
-    "NEW YORK GIANTS": "NYG", "NYG": "NYG",
-    "PHILADELPHIA EAGLES": "PHI", "PHI": "PHI",
-    "SAN FRANCISCO 49ERS": "SF", "SFO": "SF", "SF": "SF",
-    "SEATTLE SEAHAWKS": "SEA", "SEA": "SEA",
-    "TAMPA BAY BUCCANEERS": "TB", "TAM": "TB", "TB": "TB",
-    "WASHINGTON COMMANDERS": "WAS", "WASHINGTON FOOTBALL TEAM": "WAS", "WASHINGTON REDSKINS": "WAS", "WSH": "WAS", "WAS": "WAS",
 
-    # AFC
-    "BALTIMORE RAVENS": "BAL", "BAL": "BAL",
-    "BUFFALO BILLS": "BUF", "BUF": "BUF",
-    "CINCINNATI BENGALS": "CIN", "CIN": "CIN",
-    "CLEVELAND BROWNS": "CLE", "CLE": "CLE",
-    "DENVER BRONCOS": "DEN", "DEN": "DEN",
-    "HOUSTON TEXANS": "HOU", "HOU": "HOU",
-    "INDIANAPOLIS COLTS": "IND", "IND": "IND",
-    "JACKSONVILLE JAGUARS": "JAX", "JAC": "JAX", "JAX": "JAX",
-    "KANSAS CITY CHIEFS": "KC", "KAN": "KC", "KC": "KC",
-    "LAS VEGAS RAIDERS": "LV", "OAKLAND RAIDERS": "LV", "OAK": "LV", "LVR": "LV", "LV": "LV",
-    "LOS ANGELES CHARGERS": "LAC", "LA CHARGERS": "LAC", "SAN DIEGO CHARGERS": "LAC", "SD": "LAC", "SDG": "LAC", "LAC": "LAC",
-    "MIAMI DOLPHINS": "MIA", "MIA": "MIA",
-    "NEW ENGLAND PATRIOTS": "NE", "NWE": "NE", "NE": "NE",
-    "NEW YORK JETS": "NYJ", "NYJ": "NYJ",
-    "PITTSBURGH STEELERS": "PIT", "PIT": "PIT",
-    "TENNESSEE TITANS": "TEN", "TEN": "TEN",
-}
+# ---------------- Week labels / ordering ----------------
+ORDER_LABELS = [f"Week {i}" for i in range(1, 19)] + [
+    "Wild Card", "Divisional", "Conference", "Super Bowl"
+]
+ORDER_INDEX: Dict[str, int] = {lab: i for i, lab in enumerate(ORDER_LABELS)}
 
-# Código que usa ESPN en su CDN (minúsculas, a veces 2 y a veces 3 letras)
-# Ruta típica: https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/{code}.png
-_ESPN_CODE: Dict[str, str] = {
-    # NFC
-    "ARI": "ari", "ATL": "atl", "CAR": "car", "CHI": "chi", "DAL": "dal", "DET": "det",
-    "GB": "gb", "LAR": "lar", "MIN": "min", "NO": "no", "NYG": "nyg", "PHI": "phi",
-    "SF": "sf", "SEA": "sea", "TB": "tb", "WAS": "wsh",
 
-    # AFC
-    "BAL": "bal", "BUF": "buf", "CIN": "cin", "CLE": "cle", "DEN": "den", "HOU": "hou",
-    "IND": "ind", "JAX": "jax", "KC": "kc", "LV": "lv", "LAC": "lac", "MIA": "mia",
-    "NE": "ne", "NYJ": "nyj", "PIT": "pit", "TEN": "ten",
-}
-
-def _clean_team_name(s: str) -> str:
-    s = str(s or "").strip()
-    s = re.sub(r"\s+", " ", s)
-    return s
-
-def norm_abbr(team: str) -> str:
-    """Devuelve la abreviatura interna (ARI, LAC, KC, NO, etc.)."""
-    s = _clean_team_name(team).upper()
-    return _STD_ABBR.get(s, s)
-
-def to_espn_code(team: str) -> Optional[str]:
-    """Devuelve el código que usa ESPN en su CDN (minúsculas)."""
-    abbr = norm_abbr(team)
-    return _ESPN_CODE.get(abbr)
-
-def logo_url(team: str, scoreboard: bool = True, size: int = 500) -> Optional[str]:
-    """URL del logo en el CDN de ESPN para un equipo dado."""
-    code = to_espn_code(team)
-    if not code:
-        return None
-    sub = "scoreboard" if scoreboard else ""
-    if sub:
-        return f"https://a.espncdn.com/i/teamlogos/nfl/{size}/scoreboard/{code}.png"
-    return f"https://a.espncdn.com/i/teamlogos/nfl/{size}/{code}.png"
-
-# -----------------------------
-# Odds helpers
-# -----------------------------
-
-def american_to_decimal(m) -> float:
-    if m is None:
-        return float("nan")
+def week_label_from_num(n) -> str:
     try:
-        m = float(m)
+        n = int(n)
     except Exception:
-        return float("nan")
-    return 1 + (100 / abs(m) if m < 0 else m / 100.0)
-
-def decimal_to_american(d) -> float:
-    if d is None:
-        return float("nan")
-    try:
-        d = float(d)
-    except Exception:
-        return float("nan")
-    return round((d - 1) * 100, 0) if d >= 2.0 else round(-100 / (d - 1), 0)
-
-# -----------------------------
-# Weeks helpers
-# -----------------------------
-
-ORDER_LABELS = [f"Week {i}" for i in range(1, 19)] + ["Wild Card", "Divisional", "Conference", "Super Bowl"]
-ORDER_INDEX  = {lab: i for i, lab in enumerate(ORDER_LABELS)}
-
-def week_label_from_num(n: int) -> str:
-    n = int(n)
+        return "Week 999"
     if 1 <= n <= 18:
         return f"Week {n}"
     return {19: "Wild Card", 20: "Divisional", 21: "Conference", 22: "Super Bowl"}.get(n, f"Week {n}")
+
+
+# ---------------- Odds helpers ----------------
+def american_to_decimal(ml) -> float | None:
+    try:
+        x = float(ml)
+    except Exception:
+        return None
+    if x == 0 or math.isnan(x):
+        return None
+    if x > 0:
+        return 1.0 + (x / 100.0)
+    return 1.0 + (100.0 / abs(x))
+
+
+# ---------------- Team name normalization ----------------
+_ABBR_MAP = {
+    # AFC
+    "baltimore ravens": "BAL",
+    "buffalo bills": "BUF",
+    "cincinnati bengals": "CIN",
+    "cleveland browns": "CLE",
+    "denver broncos": "DEN",
+    "houston texans": "HOU",
+    "indianapolis colts": "IND",
+    "jacksonville jaguars": "JAX",
+    "kansas city chiefs": "KC",
+    "las vegas raiders": "LV",
+    "los angeles chargers": "LAC",
+    "miami dolphins": "MIA",
+    "new england patriots": "NE",
+    "new york jets": "NYJ",
+    "pittsburgh steelers": "PIT",
+    "tennessee titans": "TEN",
+    # NFC
+    "arizona cardinals": "ARI",
+    "atlanta falcons": "ATL",
+    "carolina panthers": "CAR",
+    "chicago bears": "CHI",
+    "dallas cowboys": "DAL",
+    "detroit lions": "DET",
+    "green bay packers": "GB",
+    "los angeles rams": "LAR",
+    "minnesota vikings": "MIN",
+    "new orleans saints": "NO",
+    "new york giants": "NYG",
+    "philadelphia eagles": "PHI",
+    "san francisco 49ers": "SF",
+    "seattle seahawks": "SEA",
+    "tampa bay buccaneers": "TB",
+    "washington commanders": "WAS",
+    # históricos / variantes
+    "washington football team": "WAS",
+    "oakland raiders": "LV",
+    "san diego chargers": "LAC",
+    "st. louis rams": "LAR",
+    "st louis rams": "LAR",
+}
+def norm_abbr(name: str | None) -> str | None:
+    if name is None:
+        return None
+    key = str(name).strip().lower()
+    return _ABBR_MAP.get(key, name if len(name) <= 4 else name)  # si ya es abreviación, la deja
+
+
+# ---------------- Season stage ----------------
+def _first_monday(year: int, month: int) -> pd.Timestamp:
+    d = pd.Timestamp(year=year, month=month, day=1, tz="UTC")
+    while d.weekday() != 0:  # 0=Monday
+        d += pd.Timedelta(days=1)
+    return d
+
+
+def _first_thursday_on_or_after(ts: pd.Timestamp) -> pd.Timestamp:
+    d = ts
+    while d.weekday() != 3:  # 3=Thursday
+        d += pd.Timedelta(days=1)
+    return d
+
+
+def _second_sunday_feb(year: int) -> pd.Timestamp:
+    d = pd.Timestamp(year=year, month=2, day=1, tz="UTC")
+    # first Sunday
+    while d.weekday() != 6:
+        d += pd.Timedelta(days=1)
+    # second Sunday
+    d += pd.Timedelta(days=7)
+    # Super Bowl evening; usamos fin de día para no cortar antes
+    return d.replace(hour=23, minute=59, second=59)
+
+
+def _default_bounds(year: int) -> Dict[str, pd.Timestamp]:
+    labor_day = _first_monday(year, 9)  # primer lunes de septiembre
+    kickoff_thu = _first_thursday_on_or_after(labor_day)
+    regular_start = kickoff_thu.normalize()
+    post_end = _second_sunday_feb(year + 1)
+    return {"regular_start": regular_start, "post_end": post_end}
+
+
+def season_stage(year: int, now_utc: pd.Timestamp | None = None) -> str:
+    if now_utc is None:
+        now_utc = pd.Timestamp.utcnow().tz_localize("UTC")
+
+    rules: Dict[str, Any] = SEASON_RULES.get(year, {})
+    if "regular_start" in rules and pd.notna(rules["regular_start"]):
+        regular_start = pd.to_datetime(rules["regular_start"], utc=True)
+    else:
+        regular_start = _default_bounds(year)["regular_start"]
+
+    if "post_end" in rules and pd.notna(rules["post_end"]):
+        post_end = pd.to_datetime(rules["post_end"], utc=True)
+    else:
+        post_end = _default_bounds(year)["post_end"]
+
+    if now_utc < regular_start:
+        return "Preseason"
+    if now_utc <= post_end:
+        return "In Season"
+    return "Season Ended"
