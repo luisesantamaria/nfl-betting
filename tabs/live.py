@@ -39,12 +39,41 @@ def _day_bucket(et_ts: pd.Timestamp) -> str:
 
 def _sun_slot(et_ts: pd.Timestamp) -> tuple[int, str]:
     d = et_ts.tz_convert(ET)
-    # Hora sin cero a la izquierda (portable)
-    label = d.strftime("%I:%M %p").lstrip("0")
+    label = d.strftime("%I:%M %p").lstrip("0")  # portable sin cero a la izquierda
     return d.hour * 60 + d.minute, f"Sun {label}"
 
+def _suggest_refresh_interval(df: pd.DataFrame, now_et: datetime) -> int | None:
+    # 1) si hay juegos live → 60s
+    if df["state"].astype(str).str.lower().eq("in").any():
+        return 60
+
+    # 2) si hay un kickoff en ≤ 120 min → 60s
+    future = df[df["state"].astype(str).str.lower().eq("pre")]
+    if not future.empty:
+        mins_to = (future["start_et"] - pd.Timestamp(now_et)).dt.total_seconds() / 60
+        mins_to = mins_to[mins_to >= 0]
+        if not mins_to.empty and mins_to.min() <= 120:
+            return 60
+
+    # 3) ventanas típicas NFL → 120s
+    wd, hr = now_et.weekday(), now_et.hour  # 0=Mon
+    in_thu = (wd == 3 and 18 <= hr <= 23)   # Thu 6–11:59 PM ET
+    in_mon = (wd == 0 and 18 <= hr <= 23)   # Mon 6–11:59 PM ET
+    in_sat = (wd == 5 and 12 <= hr <= 23)   # Sat 12–11:59 PM ET
+    in_sun = (wd == 6 and 12 <= hr <= 23)   # Sun 12–11:59 PM ET
+    if in_thu or in_mon or in_sat or in_sun:
+        return 120
+
+    # 4) hay partidos en próximas 24h → 180s
+    if not future.empty:
+        mins_any = (future["start_et"] - pd.Timestamp(now_et)).dt.total_seconds() / 60
+        if (mins_any >= 0).any() and mins_any.min() <= 24*60:
+            return 180
+
+    # 5) fuera de ventanas → sin refresh
+    return None
+
 def render(season: int):
-    # Week autodetect 100% calendario
     week = _autodetect_week(int(season))
 
     # Header “Live · Week X”
@@ -66,7 +95,7 @@ def render(season: int):
         unsafe_allow_html=True,
     )
 
-    # Traer tablero ESPN
+    # Traer tablero ESPN (no crashea si falla)
     try:
         df = fetch_espn_scoreboard_df(season=int(season), week=int(week))
     except Exception:
@@ -83,22 +112,24 @@ def render(season: int):
     df["day_bucket"] = df["start_et"].apply(_day_bucket)
     df["is_live"]    = df["state"].eq("in")
 
-    # Auto-refresh solo si hay juegos en vivo
-    if df["is_live"].any():
+    # Auto-refresh “inteligente”
+    now_et = datetime.now(timezone.utc).astimezone(ET)
+    interval = _suggest_refresh_interval(df, now_et)
+    if interval:
         try:
             from streamlit_extras.st_autorefresh import st_autorefresh
-            st_autorefresh(interval=60_000, key=f"live_autorefresh_{season}_{week}")
+            st_autorefresh(interval=interval * 1000, key=f"live_autorefresh_{season}_{week}_{interval}")
         except Exception:
-            pass  # si no está instalado, seguimos sin auto-refresh
+            pass  # si no está instalado, simplemente no refresca automático
 
-    # Orden: día (Thu, Sat, Sun, Mon) → en vivo primero → hora
+    # Orden: día → en vivo primero → hora
     day_order = {"Thursday": 1, "Saturday": 2, "Sunday": 3, "Monday": 4}
     df["__day_ord"]  = df["day_bucket"].map(day_order).fillna(99)
     df["__kick_ord"] = df["start_et"].apply(lambda x: x.hour * 60 + x.minute)
-    df["__live_ord"] = (~df["is_live"]).astype(int)  # live primero
+    df["__live_ord"] = (~df["is_live"]).astype(int)
     df = df.sort_values(["__day_ord", "__live_ord", "start_et"])
 
-    # Render por secciones
+    # Render por secciones y slots del domingo
     for day_name in ["Thursday", "Saturday", "Sunday", "Monday"]:
         day_df = df[df["day_bucket"].eq(day_name)]
         if day_df.empty:
