@@ -3,28 +3,13 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-# --- helpers ---
-def decimal_to_american(dec: float | int | None) -> float | None:
-    try:
-        d = float(dec)
-    except Exception:
-        return None
-    if d <= 1.0:
-        return None
-    if d >= 2.0:
-        return round((d - 1.0) * 100.0)
-    return round(-100.0 / (d - 1.0))
-
-def norm_abbr(x: str) -> str:
-    if x is None:
-        return ""
-    return str(x).strip()
-
-# Si tienes un módulo logos, úsalo; si no, usa fallback (círculo con siglas)
+# imports “suaves” para logos (si no existe el módulo, usamos fallback)
 try:
-    from .logos import get_logo_url as _get_logo_url  # opcional
+    from .logos import get_logo_url as _get_logo_url
 except Exception:
     _get_logo_url = None
+
+from .utils import norm_abbr, decimal_to_american
 
 def get_logo_url(team_abbr: str) -> str | None:
     if _get_logo_url:
@@ -32,9 +17,8 @@ def get_logo_url(team_abbr: str) -> str | None:
             return _get_logo_url(team_abbr)
         except Exception:
             return None
-    return None  # fallback: sin logos (se verá el círculo con siglas)
+    return None
 
-# --- UI card ---
 def bet_card(row: pd.Series):
     htm = norm_abbr(row.get("home_team", "")) or norm_abbr(row.get("team", ""))
     atm = norm_abbr(row.get("away_team", "")) or norm_abbr(row.get("opponent", ""))
@@ -82,8 +66,8 @@ def bet_card(row: pd.Series):
     subline_right = f"{atm}".strip()
 
     ml_txt    = f"{ml:+.0f}" if pd.notna(ml) else "—"
-    stake_txt = f\"${stake:,.2f}\" if pd.notna(stake) else "—"
-    prof_txt  = f\"${wl_profit:,.2f}\" if pd.notna(wl_profit) else "—"
+    stake_txt = f"${stake:,.2f}" if pd.notna(stake) else "—"
+    prof_txt  = f"${wl_profit:,.2f}" if pd.notna(wl_profit) else "—"
 
     st.markdown(f"""
     <div style="
