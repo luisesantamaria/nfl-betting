@@ -1,31 +1,54 @@
 import pandas as pd
 import streamlit as st
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 from .paths import ARCHIVE_DIR, BETSWEEK_DIR
 from .utils import norm_abbr, american_to_decimal, season_stage
-from .config import SEASON_RULES
+
+ET = ZoneInfo("America/New_York")
+
+def _labor_day_et(year: int) -> datetime:
+    d = datetime(year, 9, 1, tzinfo=ET)
+    while d.weekday() != 0:
+        d += timedelta(days=1)
+    return d.replace(hour=0, minute=0, second=0, microsecond=0)
+
+def _week1_tnf_et(year: int) -> datetime:
+    labor = _labor_day_et(year)
+    thu = labor + timedelta(days=3)
+    return thu.replace(hour=20, minute=20)
+
+def _current_season_year(now_utc: datetime | None = None) -> int:
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    now_et = now_utc.astimezone(ET)
+    yr = now_et.year
+    return yr if now_et >= _week1_tnf_et(yr) else (yr - 1)
 
 def list_available_seasons():
     years_from_archive = []
     for d in sorted(ARCHIVE_DIR.glob("season=*")):
         try:
             y = int(str(d.name).split("=")[1])
+            years_from_archive.append(y)
         except Exception:
             continue
-        years_from_archive.append(y)
 
-    candidates = sorted(set(years_from_archive).union(set(SEASON_RULES.keys())))
+    candidates = set(years_from_archive)
+    candidates.add(_current_season_year())
+
     out = []
-    for y in candidates:
+    for y in sorted(candidates):
         season_dir = ARCHIVE_DIR / f"season={y}"
         has_bets = (season_dir / "bets.csv").exists()
-        has_pnl  = (season_dir / "pnl.csv").exists()
-
+        has_pnl = (season_dir / "pnl.csv").exists()
         if has_bets or has_pnl:
             out.append(y)
             continue
 
-        pnl_df = load_pnl_weekly(y)  # no falla si no existe
+        pnl_df = load_pnl_weekly(y)
         stg = season_stage(y, pnl_df)
         if stg in {"preseason", "in_season"}:
             out.append(y)
@@ -116,4 +139,3 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
                 df["schedule_date"] = pd.to_datetime(df["schedule_date"], errors="coerce")
             return df
     return pd.DataFrame()
-
