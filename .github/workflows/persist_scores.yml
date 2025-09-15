@@ -1,49 +1,41 @@
-name: Persist final scores into live odds
+name: persist_scores
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "15 4 * * 5"
-    - cron: "59 23 * * 6"
-    - cron: "30 4 * * 0"
-    - cron: "30 20 * * 0"
-    - cron: "15 1 * * 1"
-    - cron: "15 4 * * 1"
-    - cron: "15 4 * * 2"
-
-permissions:
-  contents: write
+    # Thu / Sat / Sun / Mon cada 5 min (UTC). El script SÓLO escribe si un slot completo terminó.
+    - cron: "*/5 * * * 4"
+    - cron: "*/5 * * * 6"
+    - cron: "*/5 * * * 0"
+    - cron: "*/5 * * * 1"
 
 jobs:
-  persist_scores:
+  persist:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      TZ: UTC
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install pandas requests
-
-      - name: Persist scores into odds
+      - name: Run persister
         run: |
           python scripts/persist_scores.py
-
       - name: Commit & push if changed
         run: |
-          git config user.name  "github-actions"
-          git config user.email "actions@github.com"
-          git add data/live/odds.csv
-          if git diff --cached --quiet; then
+          set -e
+          if git diff --quiet -- data/live/odds.csv; then
             echo "No changes to commit."
-          else
-            git commit -m "chore(scores): persist final scores to live odds [skip ci]"
-            git push
+            exit 0
           fi
+          git config user.name  "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add data/live/odds.csv
+          git commit -m "chore(scores): persist finished kickoff slots into odds [skip ci]"
+          git push
