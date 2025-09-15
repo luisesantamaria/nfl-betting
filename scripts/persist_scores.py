@@ -1,161 +1,147 @@
-import sys
+#!/usr/bin/env python3
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+import sys
+import pandas as pd
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-import pandas as pd
+# Asegura import local (nfl_dash/*)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-# Usa el fetch del módulo live_scores (ya lo tienes en nfl_dash/live_scores.py)
 from nfl_dash.live_scores import fetch_espn_scoreboard_df
+from nfl_dash.utils import norm_abbr
 
 ET = ZoneInfo("America/New_York")
-ROOT = Path(__file__).resolve().parents[1]
-ODDS_PATH = ROOT / "data" / "live" / "odds.csv"
 
-# --------------------- helpers de calendario (auto) --------------------- #
-def labor_day_et(year: int) -> datetime:
-    d = datetime(year, 9, 1, tzinfo=ET)
-    while d.weekday() != 0:  # 0 = Monday
-        d += timedelta(days=1)
-    return d.replace(hour=0, minute=0, second=0, microsecond=0)
-
-def week1_tnf_et(year: int) -> datetime:
-    # TNF de Week 1 ≈ Thu after Labor Day, 8:20 PM ET
-    return labor_day_et(year) + timedelta(days=3, hours=20, minutes=20)
-
-def current_season_year(now_utc: datetime | None = None) -> int:
-    if now_utc is None:
-        now_utc = datetime.now(timezone.utc)
-    now_et = now_utc.astimezone(ET)
-    yr = now_et.year
-    return yr if now_et >= week1_tnf_et(yr) else yr - 1
-
-def tuesday_anchor_et(year: int) -> datetime:
-    # Semana NFL/ESPN: Tue 00:00 ET → Mon 23:59 ET
-    start = week1_tnf_et(year)
-    anchor = (start + timedelta(days=(1 - start.weekday()) % 7)).replace(hour=0, minute=0, second=0, microsecond=0)
-    if anchor <= start:
-        anchor += timedelta(days=7)
-    return anchor
-
-def autodetect_week(season: int, now_utc: datetime | None = None) -> int:
-    if now_utc is None:
-        now_utc = datetime.now(timezone.utc)
-    now_et = now_utc.astimezone(ET)
-    anchor = tuesday_anchor_et(season)
-    if now_et < anchor:
-        return 1
-    delta = now_et - anchor
-    return int(delta.days // 7 + 2)  # +2 porque anchor está entre W1 y W2
-
-# --------------------- persistencia de scores en odds.csv --------------------- #
 def _ensure_score_cols(df: pd.DataFrame) -> pd.DataFrame:
-    """Crea score_home / score_away si no existen (como Float64 para poder NaN)."""
-    out = df.copy()
-    for col in ("score_home", "score_away"):
-        if col not in out.columns:
-            out[col] = pd.Series([pd.NA] * len(out), dtype="Float64")
-        else:
-            out[col] = pd.to_numeric(out[col], errors="coerce")
-    return out
+    x = df.copy()
+    if "score_home" not in x.columns: x["score_home"] = pd.NA
+    if "score_away" not in x.columns: x["score_away"] = pd.NA
+    return x
 
-def merge_scores_into_odds(season: int, week: int) -> int:
-    if not ODDS_PATH.exists():
-        print(f"[persist] {ODDS_PATH} not found; nothing to update.")
-        return 0
+def _pair(a: str, b: str) -> str:
+    return f"{a}_{b}" if a < b else f"{b}_{a}"
+
+def _normalize_teams(df: pd.DataFrame, home_col: str, away_col: str) -> pd.DataFrame:
+    x = df.copy()
+    x[home_col] = x[home_col].astype(str).map(norm_abbr)
+    x[away_col] = x[away_col].astype(str).map(norm_abbr)
+    x["__pair"]  = [_pair(h, a) for h, a in zip(x[home_col], x[away_col])]
+    return x
+
+def _slot_complete_mask(score_df: pd.DataFrame) -> pd.Series:
+    # “Slot” = mismos minutos ET de kickoff (ej. todos los de 1:00 PM)
+    # Un slot se considera COMPLETO solo si TODOS sus juegos están en 'post'
+    g = score_df.groupby("start_et_min")["state"].apply(lambda s: (s.str.lower() == "post").all())
+    return score_df["start_et_min"].map(g.to_dict()).astype(bool)
+
+def _persist_for_week(odds_week: pd.DataFrame, season: int, week: int) -> pd.DataFrame:
+    if odds_week.empty:
+        return odds_week
 
     try:
-        odds = pd.read_csv(ODDS_PATH, low_memory=False)
-    except Exception as e:
-        print(f"[persist] failed to read odds.csv: {e}")
-        return 0
+        sb = fetch_espn_scoreboard_df(season=int(season), week=int(week))
+    except Exception:
+        return odds_week
 
-    # Normaliza tipos y columnas básicas
-    for c in ("season", "week"):
-        if c in odds.columns:
-            odds[c] = pd.to_numeric(odds[c], errors="coerce")
-    if "home_team" not in odds.columns or "away_team" not in odds.columns:
-        print("[persist] odds.csv is missing home_team/away_team columns; cannot merge.")
-        return 0
+    if sb.empty:
+        return odds_week
+
+    sb = sb.copy()
+    sb["start_time"] = pd.to_datetime(sb["start_time"], errors="coerce", utc=True)
+    sb["start_et"]   = sb["start_time"].dt.tz_convert(ET)
+    sb["start_et_min"] = sb["start_et"].dt.floor("min")
+    sb["state"] = sb["state"].astype(str).str.lower()
+    sb["short"] = sb["short"].astype(str)  # suele traer "Final", "Final/OT", etc.
+
+    # Normaliza equipos y crea pair
+    sb = _normalize_teams(sb, "home_team", "away_team")
+    sb = sb.rename(columns={"home_score":"__home_score", "away_score":"__away_score"})
+
+    # GUARDA DE ORO:
+    # 1) Solo slots donde TODOS están en 'post'
+    # 2) Y además el propio juego está 'post' y el short contiene "Final"
+    slot_done_mask = _slot_complete_mask(sb)
+    final_mask = sb["state"].eq("post") & sb["short"].str.contains("final", case=False, na=False)
+    sb = sb[slot_done_mask & final_mask]
+    if sb.empty:
+        return odds_week
+
+    # Prepara odds semana
+    ow = _normalize_teams(odds_week, "home_team", "away_team")
+
+    # Merge por pair; (semana y temporada están implícitas en el fetch)
+    m = ow.merge(
+        sb[["__pair","__home_score","__away_score"]],
+        on="__pair", how="left"
+    )
+
+    # Asigna solo si hay score FINAL del slot completo (no toca NaN)
+    set_home = m["__home_score"].notna()
+    set_away = m["__away_score"].notna()
+
+    # Asegura columnas
+    if "score_home" not in m.columns: m["score_home"] = pd.NA
+    if "score_away" not in m.columns: m["score_away"] = pd.NA
+
+    m.loc[set_home, "score_home"] = pd.to_numeric(m.loc[set_home, "__home_score"], errors="coerce")
+    m.loc[set_away, "score_away"] = pd.to_numeric(m.loc[set_away, "__away_score"], errors="coerce")
+
+    # Limpia auxiliares
+    m = m.drop(columns=[c for c in m.columns if c.startswith("__")], errors="ignore")
+    return m
+
+def main():
+    odds_path = REPO_ROOT / "data" / "live" / "odds.csv"
+    if not odds_path.exists():
+        print("[persist] no odds.csv, nothing to do")
+        return
+
+    odds = pd.read_csv(odds_path, low_memory=False)
+    if odds.empty:
+        print("[persist] odds.csv empty, nothing to do")
+        return
 
     odds = _ensure_score_cols(odds)
 
-    # Filtra temporada/semana
-    mask = (odds.get("season") == season) & (odds.get("week") == week)
-    idx = odds.index[mask].tolist()
-    if not idx:
-        print(f"[persist] no odds rows for season={season} week={week}")
-        return 0
-    view = odds.loc[idx].copy()
+    if "season" not in odds.columns or "week" not in odds.columns:
+        print("[persist] odds missing 'season' or 'week'")
+        return
 
-    # Scoreboard ESPN
-    try:
-        sb = fetch_espn_scoreboard_df(season=season, week=week)
-    except Exception as e:
-        print(f"[persist] fetch scoreboard failed: {e}")
-        return 0
+    season = int(pd.to_numeric(odds["season"], errors="coerce").dropna().max())
+    weeks = sorted(pd.to_numeric(odds["week"], errors="coerce").dropna().unique().astype(int).tolist())
+    if not weeks:
+        print("[persist] no weeks found in odds")
+        return
 
-    if sb.empty:
-        print("[persist] scoreboard empty")
-        return 0
+    before = odds.copy()
+    for w in weeks:
+        part_mask = pd.to_numeric(odds["week"], errors="coerce").eq(w)
+        part = odds[part_mask].copy()
+        rest = odds[~part_mask].copy()
 
-    # Solo finales; renombramos a nuestros nombres destino
-    finals = sb[sb["state"].astype(str).str.lower().eq("post")].copy()
-    if finals.empty:
-        print("[persist] no final games to merge")
-        return 0
+        updated = _persist_for_week(part, season=season, week=w)
+        odds = pd.concat([rest, updated], ignore_index=True)
 
-    finals = finals.rename(columns={
-        "home_team":  "home_team",
-        "away_team":  "away_team",
-        "home_score": "score_home",
-        "away_score": "score_away",
-    })
+    # Solo escribe si hubo cambios
+    if before.equals(odds):
+        print("[persist] no score changes to persist")
+        return
 
-    keep = ["home_team", "away_team", "score_home", "score_away"]
-    finals = finals[keep].copy()
+    # Mantén orden y agrega score_* al final si no estaban
+    cols = list(before.columns)
+    for c in ["score_home","score_away"]:
+        if c not in cols:
+            cols.append(c)
+    for c in odds.columns:
+        if c not in cols:
+            cols.append(c)
+    odds = odds.reindex(columns=cols)
 
-    # Merge exacto por nombres de equipo (los nombres ya coinciden en tu pipeline)
-    merged = view.merge(finals, on=["home_team", "away_team"], how="left", suffixes=("", "_sb"))
-
-    # Determina qué filas tienen actualización
-    got = merged["score_home_sb"].notna() | merged["score_away_sb"].notna()
-    n_updates = int(got.sum())
-    if n_updates == 0:
-        print("[persist] nothing to update (no finals matched).")
-        return 0
-
-    # Aplica actualización a la porción filtrada
-    updated = view.copy()
-    for col in ("score_home", "score_away"):
-        sc = f"{col}_sb"
-        if sc in merged.columns:
-            updated[col] = merged[col].where(merged[sc].isna(), merged[sc])
-
-    # Reinyecta y guarda
-    odds.loc[idx, ["score_home", "score_away"]] = updated[["score_home", "score_away"]].values
-    odds.to_csv(ODDS_PATH, index=False)
-    print(f"[persist] wrote {ODDS_PATH} | updated rows={n_updates}")
-    return n_updates
-
-def main():
-    # Permite override manual: python scripts/persist_scores.py 2025 2
-    season = None
-    week = None
-    if len(sys.argv) >= 2:
-        try: season = int(sys.argv[1])
-        except: season = None
-    if len(sys.argv) >= 3:
-        try: week = int(sys.argv[2])
-        except: week = None
-
-    if season is None:
-        season = current_season_year()
-    if week is None:
-        week = autodetect_week(season)
-
-    print(f"[persist] now → season={season}, week={week}")
-    merge_scores_into_odds(season, week)
+    odds.to_csv(odds_path, index=False)
+    print(f"[persist] wrote {odds_path} | rows={len(odds)} at {datetime.now(timezone.utc).isoformat()}")
 
 if __name__ == "__main__":
     main()
