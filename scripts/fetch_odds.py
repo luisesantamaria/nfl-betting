@@ -4,7 +4,6 @@ import sys
 import argparse
 import math
 import json
-import shutil
 from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
@@ -192,59 +191,9 @@ def apply_price_factor(parsed: pd.DataFrame, factor: float) -> pd.DataFrame:
     out["price_factor"] = float(factor)
     return out
 
-def detect_file_season(df: pd.DataFrame) -> int | None:
-    if "schedule_date" in df.columns:
-        ts = pd.to_datetime(df["schedule_date"], errors="coerce", utc=True)
-        if not ts.isna().all():
-            seasons = ts.apply(compute_season_from_ts)
-            if not seasons.dropna().empty:
-                return int(seasons.mode().iloc[0])
-    if "season" in df.columns:
-        s = pd.to_numeric(df["season"], errors="coerce")
-        if s.notna().any():
-            return int(s.mode().iloc[0])
-    return None
-
-def season_is_over(df: pd.DataFrame) -> bool:
-    if df.empty:
-        return False
-    wk = pd.to_numeric(df.get("week"), errors="coerce")
-    if wk.notna().any() and wk.max() >= 22:
-        return True
-    fseason = detect_file_season(df)
-    if fseason is None:
-        return False
-    now_season = compute_season_from_ts(pd.Timestamp(datetime.now(timezone.utc)))
-    return now_season > fseason
-
-def archive_if_needed(live_path: str, archive_dir: str, force: bool) -> None:
-    if not os.path.exists(live_path):
-        return
-    try:
-        df = pd.read_csv(live_path, low_memory=False)
-    except Exception:
-        return
-    if df.empty and not force:
-        return
-    file_season = detect_file_season(df)
-    if file_season is None:
-        file_season = compute_season_from_ts(pd.Timestamp(datetime.now(timezone.utc)))
-    if not force and not season_is_over(df):
-        return
-    season_dir = os.path.join(archive_dir, f"season={file_season}")
-    os.makedirs(season_dir, exist_ok=True)
-    dest_path = os.path.join(season_dir, "odds.csv")
-    if os.path.exists(dest_path) and not force:
-        return
-    shutil.copy2(live_path, dest_path)
-    cols = list(df.columns)
-    pd.DataFrame(columns=cols).to_csv(live_path, index=False)
-    print(f"[archive] wrote {dest_path} and reset {live_path}")
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--live-file", type=str, default="data/live/odds.csv")
-    ap.add_argument("--archive-dir", type=str, default="data/archive")
     ap.add_argument("--sport", type=str, default="americanfootball_nfl")
     ap.add_argument("--regions", type=str, default="us")
     ap.add_argument("--markets", type=str, default="h2h,spreads,totals")
@@ -252,9 +201,6 @@ def main():
     ap.add_argument("--season", type=int, default=None)
     ap.add_argument("--week", type=int, default=None)
     ap.add_argument("--price-factor", type=float, default=float(os.environ.get("ODDS_PRICE_FACTOR", "1.022")))
-    ap.add_argument("--archive-on-season-end", dest="archive_on_season_end", action="store_true", default=True)
-    ap.add_argument("--no-archive-on-season-end", dest="archive_on_season_end", action="store_false")
-    ap.add_argument("--archive-force", action="store_true", default=False)
     args = ap.parse_args()
 
     live_path = args.live_file
@@ -263,11 +209,9 @@ def main():
     cur_season, cur_week, cur_label = current_season_week()
     print(f"[odds] now → season={cur_season}, week={cur_week} ({cur_label})")
 
-    # ⛔ Preseason/Off-season guard: si aún no hay Week 1, no llamamos API
+    # Guard: si aún no hay Week 1, no llamamos API
     if pd.isna(cur_week):
         print("[odds] offseason or preseason detected → skip fetch.")
-        if args.archive_force or args.archive_on_season_end:
-            archive_if_needed(live_path, args.archive_dir, force=args.archive_force)
         return
 
     api_key = os.environ.get("ODDS_API_KEY", "").strip()
@@ -344,9 +288,6 @@ def main():
 
     combined.to_csv(live_path, index=False)
     print(f"[odds] wrote {live_path} | rows={len(combined)} | factor={args.price_factor}")
-
-    if args.archive_force or args.archive_on_season_end:
-        archive_if_needed(live_path, args.archive_dir, force=args.archive_force)
 
 if __name__ == "__main__":
     main()
