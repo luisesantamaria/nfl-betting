@@ -1,5 +1,4 @@
 name: update_odds_weekly
-
 permissions:
   contents: write
 
@@ -9,8 +8,7 @@ concurrency:
 
 on:
   schedule:
-    # Martes 05:00 UTC ≈ martes 00:00 ET
-    - cron: "0 5 * * 2"
+    - cron: "0 5 * * 2"   # Martes 00:00 ET (05:00 UTC) - ajusta si usas otro huso
   workflow_dispatch:
     inputs:
       season:
@@ -58,16 +56,7 @@ jobs:
             exit 1
           fi
 
-      - name: Debug env var mapping
-        env:
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: |
-          if [ -z "$ODDS_API_KEY" ]; then
-            echo "ODDS_API_KEY env var is empty."
-            exit 1
-          fi
-
-      - name: Fetch odds (current week) + auto-archive if season ended
+      - name: Fetch odds (current week) – The Odds API
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           PF_INPUT: ${{ github.event.inputs.price_factor }}
@@ -75,20 +64,23 @@ jobs:
           WEEK: ${{ github.event.inputs.week }}
           ARCHIVE_FORCE: ${{ github.event.inputs.archive_force }}
         run: |
-          set -e
-          if [ -z "$PF_INPUT" ]; then PF_INPUT="1.022"; fi
+          set -euxo pipefail
+          echo "SEASON override: ${SEASON:-<none>}"
+          echo "WEEK   override: ${WEEK:-<none>}"
+          echo "ARCHIVE_FORCE: ${ARCHIVE_FORCE:-false}"
+          if [ -z "${PF_INPUT:-}" ]; then PF_INPUT="1.022"; fi
           python scripts/fetch_odds.py \
             --markets "h2h,spreads,totals" \
             --only-current-week \
             --price-factor "$PF_INPUT" \
             ${SEASON:+--season "$SEASON"} \
             ${WEEK:+--week "$WEEK"} \
-            $( [ "$ARCHIVE_FORCE" = "true" ] && echo "--archive-force" )
+            $( [ "${ARCHIVE_FORCE:-false}" = "true" ] && echo "--archive-force" )
 
       - name: Show live file
         run: |
           ls -lah data/live || true
-          [ -f data/live/odds.csv ] && head -n 20 data/live/odds.csv || true
+          [ -f data/live/odds.csv ] && head -n 40 data/live/odds.csv || true
 
       - name: Upload artifact (odds-live)
         uses: actions/upload-artifact@v4
@@ -104,5 +96,5 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add -f data/live/odds.csv
           git add -A data/archive || true
-          git commit -m "chore(data): refresh odds live (and archive if season ended) [skip ci]" || echo "no changes"
+          git commit -m "chore(data): refresh odds live [skip ci]" || echo "no changes"
           git push
