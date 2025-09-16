@@ -35,7 +35,9 @@ jobs:
         run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
 
       - name: Persist finished scores into odds
-        run: python scripts/persist_scores.py
+        run: |
+          set -euxo pipefail
+          python scripts/persist_scores.py
 
       - name: Commit & push
         run: |
