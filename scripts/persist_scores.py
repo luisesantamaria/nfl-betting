@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# scripts/persists_score.py
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -7,6 +8,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
+# Permite imports locales del repo (nfl_dash/*)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from nfl_dash.live_scores import fetch_espn_scoreboard_df
 from nfl_dash.utils import norm_abbr
@@ -33,7 +35,7 @@ def _tuesday_anchor_et(year: int) -> datetime:
     week_monday = (tnf - timedelta(days=tnf.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     return week_monday + timedelta(days=1)  # Tue 00:00 ET
 
-# --- Nuevo: corte diferido al miércoles 02:00 ET (≈ 03:00 BRT)
+# Corte diferido al miércoles 02:00 ET
 CUTOVER_DOW_ET = 2   # 0=Mon,1=Tue,2=Wed
 CUTOVER_HOUR_ET = 2  # 02:00 ET
 
@@ -104,17 +106,19 @@ def main():
 
     odds = pd.read_csv(ODDS_PATH, low_memory=False)
 
-    # Asegura columnas finales
-    for c in ("score_home", "score_away"):
+    # Asegura columnas de scores y home_win presentes (NA por default)
+    for c in ("score_home", "score_away", "home_win"):
         if c not in odds.columns:
             odds[c] = pd.NA
 
+    # Tipos básicos
     odds["season"] = pd.to_numeric(odds.get("season"), errors="coerce").astype("Int64")
     odds["week"]   = pd.to_numeric(odds.get("week"), errors="coerce").astype("Int64")
     for c in ("home_team", "away_team"):
         if c in odds.columns:
             odds[c] = odds[c].astype(str)
 
+    # Temporada efectiva
     season_vals = odds["season"].dropna().unique()
     if len(season_vals) == 0:
         print("[persist] SKIP: season vacío en odds.")
@@ -155,21 +159,48 @@ def main():
         validate="m:1"
     )
 
+    # Mapear correctamente scores al "home" de odds aun si ESPN invierte el orden
     same_home = m["home_team"].astype(str).eq(m["home_team_sb"].astype(str))
     sh = np.where(same_home, m["home_score"], m["away_score"])
     sa = np.where(same_home, m["away_score"], m["home_score"])
     sh = pd.to_numeric(sh, errors="coerce")
     sa = pd.to_numeric(sa, errors="coerce")
 
+    # Actualiza scores si hay valores nuevos (no sobreescribe con NA)
     m["score_home"] = np.where(pd.notna(sh), sh, m["score_home"])
     m["score_away"] = np.where(pd.notna(sa), sa, m["score_away"])
+
+    # === Nuevo: calcular/actualizar home_win basado en scores ===
+    # Regla: si hay ambos scores numéricos, home_win = 1 si home>away, 0 si home<away; NA si falta algo.
+    # Si ya existía home_win, lo actualizamos donde podamos derivarlo de scores (preferimos la "verdad" del marcador).
+    def _compute_home_win(sr_home, sr_away):
+        h = pd.to_numeric(sr_home, errors="coerce")
+        a = pd.to_numeric(sr_away, errors="coerce")
+        out = pd.Series(pd.NA, index=sr_home.index, dtype="Int64")
+        both = h.notna() & a.notna()
+        out.loc[both & (h > a)] = 1
+        out.loc[both & (h < a)] = 0
+        # empates casi no existen en NFL moderno; si ocurriera, dejamos NA (o podrías marcar 0)
+        return out
+
+    hw_new = _compute_home_win(m["score_home"], m["score_away"])
+    if "home_win" in m.columns:
+        # Sobrescribe donde tenemos computable; conserva lo previo donde aún no hay scores
+        is_set = hw_new.notna()
+        m.loc[is_set, "home_win"] = hw_new[is_set]
+        # Asegura dtype nulo entero
+        m["home_win"] = pd.to_numeric(m["home_win"], errors="coerce").astype("Int64")
+    else:
+        m["home_win"] = pd.to_numeric(hw_new, errors="coerce").astype("Int64")
 
     # Limpia columnas auxiliares del merge
     drop_cols = [c for c in m.columns if c.endswith("_sb")] + ["home_score", "away_score", "pair"]
     m = m.drop(columns=[c for c in drop_cols if c in m.columns], errors="ignore")
 
-    # Mantén exactamente el orden del odds original
+    # Mantén exactamente el orden del odds original; si home_win no existía, lo agregamos al final
     base_cols = [c for c in odds.columns if c in m.columns]
+    if "home_win" not in base_cols:
+        base_cols = base_cols + ["home_win"]
     out = m[base_cols]
 
     out.to_csv(ODDS_PATH, index=False)
