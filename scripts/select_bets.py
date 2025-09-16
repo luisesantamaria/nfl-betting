@@ -273,7 +273,7 @@ def build_master(odds_df: pd.DataFrame, pre_df: pd.DataFrame) -> pd.DataFrame:
     return m
 
 # ----------------------------
-# Modelo (igual al notebook)
+# Modelo (igual al notebook) + MÉTRICAS DEBUG
 # ----------------------------
 def run_model(master_all: pd.DataFrame, target_season: int):
     dprint("run_model: master_all shape:", master_all.shape,
@@ -327,7 +327,6 @@ def run_model(master_all: pd.DataFrame, target_season: int):
         train_years = hist_years[-4:-1]  # target-4, target-3, target-2
         val_year    = hist_years[-1]     # target-1
     else:
-        # fallback si hubiera menos de 4 historicas (raro, pero robusto)
         train_years = hist_years[:-1]
         val_year    = hist_years[-1]
     test_year  = target_season
@@ -390,6 +389,7 @@ def run_model(master_all: pd.DataFrame, target_season: int):
     val_bins  = cut_bins(val_df["home_line"])
     test_bins = cut_bins(test_df["home_line"]) if len(test_df) else pd.Series(dtype="category")
 
+    # Calibración
     iso_global = IsotonicRegression(out_of_bounds="clip")
     iso_global.fit(p_va, y_val)
     dprint("run_model: fitted iso_global.")
@@ -423,6 +423,7 @@ def run_model(master_all: pd.DataFrame, target_season: int):
     p_te_cal = apply_bin_calibration(p_te, test_bins)
     dprint("run_model: calibrated preds lens -> train/val/test:", len(p_tr_cal), len(p_va_cal), len(p_te_cal))
 
+    # Prior simple con home_line
     prior_lr = LogisticRegression(C=2.0, solver="liblinear", max_iter=200)
     prior_lr.fit(train_df[["home_line"]], y_train)
     dprint("run_model: fitted prior LR on home_line.")
@@ -431,6 +432,7 @@ def run_model(master_all: pd.DataFrame, target_season: int):
     p_va_sp = prior_lr.predict_proba(val_df[["home_line"]])[:,1]
     p_te_sp = prior_lr.predict_proba(test_df[["home_line"]])[:,1] if len(test_df) else np.array([])
 
+    # Meta features (NO evaluamos meta en val para evitar leakage)
     def meta_matrix(df_in, p_hgb_cal, p_spread):
         M = pd.DataFrame({
             "p_hgb":   p_hgb_cal,
@@ -453,10 +455,45 @@ def run_model(master_all: pd.DataFrame, target_season: int):
                  if len(meta_test) else np.array([]))
     dprint("run_model: p_te_meta len:", len(p_te_meta))
 
+    # ============================
+    # MÉTRICAS DEBUG (comparables con tu notebook)
+    # ============================
+    # Train (HGB calibrado)
+    acc_tr  = accuracy_score(y_train, (p_tr_cal >= 0.5).astype(int))
+    auc_tr  = roc_auc_score(y_train, p_tr_cal)
+    ll_tr   = log_loss(y_train, p_tr_cal)
+
+    # Val (HGB calibrado)
+    acc_va  = accuracy_score(y_val, (p_va_cal >= 0.5).astype(int))
+    auc_va  = roc_auc_score(y_val, p_va_cal)
+    ll_va   = log_loss(y_val, p_va_cal)
+
+    # Test (meta LR) — solo si hay labels en test_df
+    if "home_win" in test_df.columns and test_df["home_win"].notna().any():
+        y_te_full = test_df["home_win"].astype(float).values
+        # Filtramos filas con home_win no nulo y con pred meta disponible
+        msk = ~np.isnan(y_te_full)
+        y_te = y_te_full[msk].astype(int)
+        p_te_eval = p_te_meta[msk] if len(p_te_meta)==len(y_te_full) else p_te_cal[msk]
+        acc_te = accuracy_score(y_te, (p_te_eval >= 0.5).astype(int))
+        auc_te = roc_auc_score(y_te, p_te_eval)
+        ll_te  = log_loss(y_te, p_te_eval)
+    else:
+        acc_te, auc_te, ll_te = None, None, None
+
+    dprint("\n[DBG Metrics]")
+    dprint(f"train | ACC {acc_tr:.3f} | ROC_AUC {auc_tr:.3f} | LOGLOSS {ll_tr:.3f}")
+    dprint(f"val   | ACC {acc_va:.3f} | ROC_AUC {auc_va:.3f} | LOGLOSS {ll_va:.3f}")
+    if acc_te is not None:
+        dprint(f"test  | ACC {acc_te:.3f} | ROC_AUC {auc_te:.3f} | LOGLOSS {ll_te:.3f}")
+    else:
+        dprint("test  | (no labels available yet)")
+
     # Empaquetar preds para la temporada target
     test_preds = test_df[["season","week","week_label","home_team","away_team"]].copy()
     if "home_win" in test_df.columns:
         test_preds["home_win"] = test_df["home_win"].values
+    # Nota: notebook conservaba p_home_win_lr_cal y p_home_win_meta (usamos meta como final en test)
     test_preds["p_home_win_lr_cal"] = p_te_cal
     test_preds["p_home_win_meta"]   = p_te_meta
     dprint("run_model: test_preds shape:", test_preds.shape)
@@ -708,7 +745,7 @@ def main():
     master_target = build_master(odds_cur, stats_all)
     dprint("master_target shape:", master_target.shape)
 
-    # Cargar también odds históricos si existen en archivo de temporadas previas (opcional):
+    # Cargar también odds históricas si existen en archivo de temporadas previas (opcional):
     hist_frames = []
     for y in range(target_season-4, target_season):
         p = os.path.join(ARCHIVE_DIR, f"season={y}", "odds.csv")
@@ -743,7 +780,7 @@ def main():
     dprint("master_all shape:", master_all.shape,
            "| seasons in master_all:", sorted(master_all["season"].dropna().unique().tolist()))
 
-    # Ejecutar el modelo (igual notebook)
+    # Ejecutar el modelo (igual notebook) + imprime métricas
     test_preds = run_model(master_all, target_season)
 
     # Unir probs con odds actuales
