@@ -12,6 +12,7 @@ import requests
 
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/{sport}/odds"
 
+# --- Normalización a abreviaturas (incluye LA y LAC) ---
 TEAM_NAME_TO_ABBR = {
     "Arizona Cardinals": "ARI",
     "Atlanta Falcons": "ATL",
@@ -50,7 +51,11 @@ TEAM_NAME_TO_ABBR = {
 def normalize_team(name: str) -> str:
     if not isinstance(name, str):
         return name
-    return TEAM_NAME_TO_ABBR.get(name.strip(), name.strip().upper())
+    name = name.strip()
+    # si ya viene abreviado, respétalo
+    if name.upper() in TEAM_NAME_TO_ABBR.values():
+        return name.upper()
+    return TEAM_NAME_TO_ABBR.get(name, name.upper())
 
 def american_to_decimal(m):
     if m is None or (isinstance(m, float) and math.isnan(m)):
@@ -174,3 +179,179 @@ def parse_rows(events: list, want_markets: set) -> pd.DataFrame:
         ))
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+def compute_season_from_ts(ts_utc: pd.Timestamp) -> int:
+    if pd.isna(ts_utc):
+        now = datetime.now(timezone.utc)
+        return now.year if now.month >= 3 else now.year - 1
+    y, m = ts_utc.year, ts_utc.month
+    return y if m >= 3 else y - 1
+
+def first_thursday_after_labor_day_ts(year: int) -> pd.Timestamp:
+    d = pd.Timestamp(year=year, month=9, day=1, tz="UTC")
+    while d.weekday() != 0:
+        d += pd.Timedelta(days=1)
+    thu = d + pd.Timedelta(days=3)
+    return thu.normalize()
+
+LABEL_POST = {19: "Wild Card", 20: "Divisional", 21: "Conference", 22: "Super Bowl"}
+
+def infer_week_fields(ts_utc: pd.Timestamp):
+    if pd.isna(ts_utc):
+        return (np.nan, np.nan)
+    year = compute_season_from_ts(ts_utc)
+    anchor = first_thursday_after_labor_day_ts(year)
+    dd = (ts_utc.normalize() - anchor).days
+    w = 1 + (dd // 7)
+    if w < 1:
+        return (np.nan, np.nan)
+    if w <= 18:
+        return (int(w), f"Week {int(w)}")
+    k = min(4, int(w) - 18)
+    wk = 18 + k
+    return (wk, LABEL_POST.get(wk, f"Week {wk}"))
+
+def current_season_week(now_utc: datetime | None = None):
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    ts = pd.Timestamp(now_utc)
+    if ts.tz is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    season = compute_season_from_ts(ts)
+    w, lbl = infer_week_fields(ts)
+    return season, w, lbl
+
+def apply_price_factor(parsed: pd.DataFrame, factor: float) -> pd.DataFrame:
+    out = parsed.copy()
+    for side in ("home", "away"):
+        dr = f"decimal_{side}_raw"
+        if dr in out.columns:
+            out[f"decimal_{side}"] = out[dr].astype(float) / float(factor)
+            out[f"ml_{side}"] = out[f"decimal_{side}"].apply(decimal_to_american)
+        else:
+            out[f"decimal_{side}"] = np.nan
+            out[f"ml_{side}"] = np.nan
+        mr = f"ml_{side}_raw"
+        if mr not in out.columns:
+            out[mr] = out[f"decimal_{side}"].apply(decimal_to_american)
+    out["price_factor"] = float(factor)
+    return out
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--live-file", type=str, default="data/live/odds.csv")
+    ap.add_argument("--sport", type=str, default="americanfootball_nfl")
+    ap.add_argument("--regions", type=str, default="us")
+    ap.add_argument("--markets", type=str, default="h2h,spreads,totals")
+    ap.add_argument("--only-current-week", dest="only_current_week", action="store_true", default=True)
+    ap.add_argument("--season", type=int, default=None, help="Override season (e.g., 2025)")
+    ap.add_argument("--week", type=int, default=None, help="Override week (1..22)")
+    ap.add_argument("--price-factor", type=float, default=float(os.environ.get("ODDS_PRICE_FACTOR", "1.022")))
+    ap.add_argument("--archive-force", action="store_true", default=False, help="no-op here")
+    args = ap.parse_args()
+
+    live_path = args.live_file
+    os.makedirs(os.path.dirname(live_path), exist_ok=True)
+
+    cur_season, cur_week, cur_label = current_season_week()
+    print(f"[odds] now → season={cur_season}, week={cur_week} ({cur_label})")
+
+    if pd.isna(cur_week):
+        print("[odds] offseason or preseason detected → skip fetch.")
+        return
+
+    api_key = os.environ.get("ODDS_API_KEY", "").strip()
+    if not api_key:
+        print("[odds] ERROR: ODDS_API_KEY env var is empty.", file=sys.stderr)
+        sys.exit(1)
+
+    want_markets = set([m.strip() for m in args.markets.split(",") if m.strip()])
+    events = fetch_events(api_key, args.sport, args.regions, args.markets)
+    df_new = parse_rows(events, want_markets)
+
+    base_cols = [
+        "season", "week", "week_label", "schedule_date",
+        "home_team", "away_team",
+        "ml_home", "ml_away", "decimal_home", "decimal_away",
+        "ml_home_raw", "ml_away_raw", "decimal_home_raw", "decimal_away_raw",
+        "spread_home", "spread_away", "over_under_line",
+        "price_factor",
+        "event_id"
+    ]
+
+    if df_new.empty:
+        parsed = pd.DataFrame(columns=base_cols)
+    else:
+        parsed = df_new.copy()
+        parsed["schedule_date"] = pd.to_datetime(parsed["schedule_date"], errors="coerce", utc=True)
+        parsed["season"] = parsed["schedule_date"].apply(compute_season_from_ts).astype("Int64")
+        weeks = parsed["schedule_date"].apply(infer_week_fields)
+        parsed["week"] = [w for (w, lbl) in weeks]
+        parsed["week_label"] = [lbl for (w, lbl) in weeks]
+        parsed = parsed[parsed["week"].notna()]
+        parsed = apply_price_factor(parsed, args.price_factor)
+        for c in base_cols:
+            if c not in parsed.columns:
+                parsed[c] = np.nan
+
+    # Carga lo previo (para preservar columnas extra, p. ej. score_home/score_away)
+    if os.path.exists(live_path):
+        try:
+            prev = pd.read_csv(live_path, low_memory=False)
+        except Exception:
+            prev = pd.DataFrame(columns=base_cols)
+    else:
+        prev = pd.DataFrame(columns=base_cols)
+
+    # Overrides efectivos
+    target_season = args.season if args.season is not None else cur_season
+    target_week   = args.week   if args.week   is not None else cur_week
+    print(f"[odds] target → season={target_season} week={target_week}")
+
+    # Filtra SOLO la semana objetivo (si se pide)
+    if args.only_current_week and pd.notna(target_week):
+        before = len(parsed)
+        parsed = parsed[(parsed["season"] == target_season) & (parsed["week"] == target_week)]
+        print(f"[odds] parsed week-filter {target_season}/{target_week}: {before} → {len(parsed)} rows")
+
+    # Concat sin perder columnas previas
+    if parsed.empty:
+        combined = prev.copy()
+        print("[odds] no new rows; leaving file as-is.")
+    else:
+        combined = pd.concat([prev, parsed], ignore_index=True, sort=False)
+
+    # Completar week/labels si faltaran
+    if "schedule_date" in combined.columns:
+        combined["schedule_date"] = pd.to_datetime(combined["schedule_date"], errors="coerce", utc=True)
+        mask = combined.get("week").isna() & combined["schedule_date"].notna() if "week" in combined.columns else False
+        if isinstance(mask, pd.Series) and mask.any():
+            w2 = combined.loc[mask, "schedule_date"].apply(infer_week_fields)
+            combined.loc[mask, "week"] = [w for (w, lbl) in w2]
+            combined.loc[mask, "week_label"] = [lbl for (w, lbl) in w2]
+
+    # De-dup por event_id si existe, si no, por claves lógicas
+    if "event_id" in combined.columns and combined["event_id"].notna().any():
+        combined = combined.drop_duplicates(subset=["event_id"], keep="last")
+    else:
+        for k in ["season","week","home_team","away_team"]:
+            if k not in combined.columns:
+                combined[k] = np.nan
+        combined = combined.drop_duplicates(subset=["season","week","home_team","away_team"], keep="last")
+
+    # Orden
+    order_keys = [k for k in ["season","week","schedule_date","home_team"] if k in combined.columns]
+    if order_keys:
+        combined = combined.sort_values(order_keys, kind="mergesort")
+    if "season" in combined.columns:
+        combined["season"] = pd.to_numeric(combined["season"], errors="coerce").astype("Int64")
+    if "week" in combined.columns:
+        combined["week"] = pd.to_numeric(combined["week"], errors="coerce").astype("Int64")
+
+    combined.to_csv(live_path, index=False)
+    print(f"[odds] wrote {live_path} | rows={len(combined)} | factor={args.price_factor}")
+
+if __name__ == "__main__":
+    main()
