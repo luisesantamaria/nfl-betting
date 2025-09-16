@@ -1,0 +1,87 @@
+name: generate_bets_weekly
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bets-weekly-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  schedule:
+    # Miércoles 00:00 America/New_York ≈ 05:00 UTC; ajusta si quieres otra hora
+    - cron: "0 5 * * 3"
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Override season (optional)"
+        required: false
+      week:
+        description: "Override week (optional)"
+        required: false
+
+jobs:
+  build_bets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scikit-learn python-dateutil pytz
+
+      - name: Ensure folders
+        run: |
+          mkdir -p data/live
+          mkdir -p data/archive
+
+      - name: Show inputs
+        run: |
+          echo "season='${{ github.event.inputs.season }}'"
+          echo "week='${{ github.event.inputs.week }}'"
+
+      - name: Export envs (only if non-empty)
+        run: |
+          if [ -n "${{ github.event.inputs.season }}" ]; then
+            echo "TARGET_SEASON=${{ github.event.inputs.season }}" >> $GITHUB_ENV
+          fi
+          if [ -n "${{ github.event.inputs.week }}" ]; then
+            echo "TARGET_WEEK=${{ github.event.inputs.week }}" >> $GITHUB_ENV
+          fi
+          # Log what we ended up exporting:
+          echo "Exported TARGET_SEASON=${TARGET_SEASON:-<auto>}"
+          echo "Exported TARGET_WEEK=${TARGET_WEEK:-<auto>}"
+
+      - name: Run select_bets
+        run: |
+          set -e
+          python scripts/select_bets.py
+
+      - name: Show output
+        run: |
+          ls -lah data/live || true
+          [ -f data/live/bets.csv ] && head -n 20 data/live/bets.csv || true
+
+      - name: Upload artifact (bets-live)
+        uses: actions/upload-artifact@v4
+        with:
+          name: bets-live-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/live/bets.csv
+          if-no-files-found: error
+
+      - name: Commit & push bets.csv
+        run: |
+          set -e
+          git config user.name  "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f data/live/bets.csv
+          git commit -m "chore(data): update bets selected [skip ci]" || echo "no changes"
+          git push
