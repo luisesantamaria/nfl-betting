@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# scripts/fetch_odds.py
 import os
 import sys
 import argparse
@@ -198,9 +199,11 @@ def main():
     ap.add_argument("--regions", type=str, default="us")
     ap.add_argument("--markets", type=str, default="h2h,spreads,totals")
     ap.add_argument("--only-current-week", dest="only_current_week", action="store_true", default=True)
-    ap.add_argument("--season", type=int, default=None)
-    ap.add_argument("--week", type=int, default=None)
+    ap.add_argument("--season", type=int, default=None, help="Override season (e.g., 2025)")
+    ap.add_argument("--week", type=int, default=None, help="Override week (1..22)")
     ap.add_argument("--price-factor", type=float, default=float(os.environ.get("ODDS_PRICE_FACTOR", "1.022")))
+    # no-op para no romper el workflow (NO archiva aquí)
+    ap.add_argument("--archive-force", action="store_true", default=False, help="no-op here")
     args = ap.parse_args()
 
     live_path = args.live_file
@@ -246,6 +249,7 @@ def main():
         parsed = apply_price_factor(parsed, args.price_factor)
         parsed = parsed.reindex(columns=col_order)
 
+    # Leer lo previo (si existe)
     if os.path.exists(live_path):
         try:
             prev = pd.read_csv(live_path, low_memory=False)
@@ -255,11 +259,23 @@ def main():
         prev = pd.DataFrame(columns=col_order)
     prev = prev.reindex(columns=col_order)
 
+    # Determinar overrides efectivos
+    target_season = args.season if args.season is not None else cur_season
+    target_week   = args.week   if args.week   is not None else cur_week
+
+    # ✅ Filtrar SOLO lo nuevo (parsed) a la semana objetivo (si se pide).
+    if args.only_current_week and pd.notna(target_week):
+        before = len(parsed)
+        parsed = parsed[(parsed["season"] == target_season) & (parsed["week"] == target_week)]
+        print(f"[odds] parsed week-filter {target_season}/{target_week}: {before} → {len(parsed)} rows")
+
+    # Combinar: agregar/actualizar sin borrar semanas anteriores
     if parsed.empty:
         combined = prev.copy()
     else:
         combined = pd.concat([prev, parsed], ignore_index=True)
 
+    # Completar week/labels faltantes si hubiera
     if "schedule_date" in combined.columns:
         combined["schedule_date"] = pd.to_datetime(combined["schedule_date"], errors="coerce", utc=True)
         mask = combined["week"].isna() & combined["schedule_date"].notna()
@@ -268,19 +284,13 @@ def main():
             combined.loc[mask, "week"] = [w for (w, lbl) in w2]
             combined.loc[mask, "week_label"] = [lbl for (w, lbl) in w2]
 
-    target_season = args.season if args.season is not None else cur_season
-    target_week = args.week if args.week is not None else cur_week
-
-    if args.only_current_week and pd.notna(target_week):
-        before = len(combined)
-        combined = combined[(combined["season"] == target_season) & (combined["week"] == target_week)]
-        print(f"[odds] week-filter {target_season}/{target_week}: {before} → {len(combined)} rows")
-
+    # De-dup por event_id; si no hay, por claves lógicas
     if "event_id" in combined.columns and combined["event_id"].notna().any():
         combined = combined.drop_duplicates(subset=["event_id"], keep="last")
     else:
         combined = combined.drop_duplicates(subset=["season","week","home_team","away_team"], keep="last")
 
+    # Orden estable
     combined = combined.sort_values(["season","week","schedule_date","home_team"], kind="mergesort")
     combined["season"] = pd.to_numeric(combined["season"], errors="coerce").astype("Int64")
     combined["week"] = pd.to_numeric(combined["week"], errors="coerce").astype("Int64")
