@@ -1,0 +1,286 @@
+schedule_date,schedule_season,schedule_week,schedule_playoff,home_team,score_home,score_away,away_team,team_favorite_id,spread_favorite,over_under_line,stadium,stadium_neutral,weather_temperature,weather_wind_mph,weather_humidity,weather_detail
+9/9/2021,2021,1,False,TB,31,29,DAL,TB,-7.5,51.5,Raymond James Stadium,False,,,,
+9/12/2021,2021,1,False,ATL,6,32,PHI,ATL,-3.5,48,Mercedes-Benz Stadium,False,72.0,0.0,,indoor
+9/12/2021,2021,1,False,BUF,16,23,PIT,BUF,-6.5,48.5,Highmark Stadium,False,,,,
+9/12/2021,2021,1,False,CAR,19,14,NYJ,CAR,-5.0,44.5,Bank of America Stadium,False,,,,
+9/12/2021,2021,1,False,CIN,27,24,MIN,MIN,-3.0,48,Paul Brown Stadium,False,,,,
+9/12/2021,2021,1,False,DET,33,41,SF,SF,-7.5,46,Ford Field,False,72.0,0.0,,indoor
+9/12/2021,2021,1,False,HOU,37,21,JAX,JAX,-3.0,44.5,NRG Stadium,False,72.0,0.0,,indoor
+9/12/2021,2021,1,False,IND,16,28,SEA,SEA,-2.5,48.5,Lucas Oil Stadium,False,72.0,0.0,,indoor
+9/12/2021,2021,1,False,KC,33,29,CLE,KC,-6.0,53,Arrowhead Stadium,False,,,,
+9/12/2021,2021,1,False,LA,34,14,CHI,LAR,-7.5,44.5,SoFi Stadium,False,72.0,0.0,,indoor
+9/12/2021,2021,1,False,NE,16,17,MIA,NE,-2.5,44.5,Gillette Stadium,False,,,,
+9/12/2021,2021,1,False,NO,38,3,GB,GB,-4.0,49.5,TIAA Bank Field,True,,,,
+9/12/2021,2021,1,False,NYG,13,27,DEN,DEN,-2.5,42.5,MetLife Stadium,False,,,,
+9/12/2021,2021,1,False,TEN,13,38,ARI,TEN,-3.0,51.5,Nissan Stadium,False,,,,
+9/12/2021,2021,1,False,WAS,16,20,LAC,LAC,-1.0,44.5,FedEx Field,False,,,,
+9/13/2021,2021,1,False,LV,33,27,BAL,BAL,-4.5,51,Allegiant Stadium,False,72.0,0.0,,indoor
+9/16/2021,2021,2,False,WAS,30,29,NYG,WAS,-3.0,41,FedEx Field,False,,,,
+9/19/2021,2021,2,False,ARI,34,33,MIN,ARI,-4.0,51,University of Phoenix Stadium,False,72.0,0.0,,indoor
+9/19/2021,2021,2,False,BAL,36,35,KC,KC,-4.0,55.5,M&T Bank Stadium,False,,,,
+9/19/2021,2021,2,False,CAR,26,7,NO,NO,-3.5,44,Bank of America Stadium,False,,,,
+9/19/2021,2021,2,False,CHI,20,17,CIN,CHI,-3.0,45,Soldier Field,False,,,,
+9/19/2021,2021,2,False,CLE,31,21,HOU,CLE,-12.5,48,FirstEnergy Stadium,False,,,,
+9/19/2021,2021,2,False,IND,24,27,LA,LAR,-4.0,47.5,Lucas Oil Stadium,False,72.0,0.0,,indoor
+9/19/2021,2021,2,False,JAX,13,23,DEN,DEN,-6.0,45.5,TIAA Bank Field,False,,,,
+9/19/2021,2021,2,False,LAC,17,20,DAL,LAC,-3.0,55,SoFi Stadium,False,72.0,0.0,,indoor
+9/19/2021,2021,2,False,MIA,0,35,BUF,BUF,-3.0,48,Hard Rock Stadium,False,,,,
+9/19/2021,2021,2,False,NYJ,6,25,NE,NE,-5.5,42.5,MetLife Stadium,False,,,,
+9/19/2021,2021,2,False,PHI,11,17,SF,SF,-3.5,50,Lincoln Financial Field,False,,,,
+9/19/2021,2021,2,False,PIT,17,26,LV,PIT,-6.0,47.5,Heinz Field,False,,,,
+9/19/2021,2021,2,False,SEA,30,33,TEN,SEA,-5.5,54,Lumen Field,False,,,,
+9/19/2021,2021,2,False,TB,48,25,ATL,TB,-12.5,52,Raymond James Stadium,False,,,,
+9/20/2021,2021,2,False,GB,35,17,DET,GB,-10.5,48,Lambeau Field,False,,,,
+9/23/2021,2021,3,False,HOU,9,24,CAR,CAR,-8.0,43,NRG Stadium,False,72.0,0.0,,indoor
+9/26/2021,2021,3,False,BUF,43,21,WAS,BUF,-7.0,45.5,Highmark Stadium,False,,,,
+9/26/2021,2021,3,False,CLE,26,6,CHI,CLE,-7.5,45,FirstEnergy Stadium,False,,,,
+9/26/2021,2021,3,False,DEN,26,0,NYJ,DEN,-10.0,41.5,Empower Field at Mile High,False,,,,
+9/26/2021,2021,3,False,DET,17,19,BAL,BAL,-7.5,51,Ford Field,False,72.0,0.0,,indoor
+9/26/2021,2021,3,False,JAX,19,31,ARI,ARI,-8.0,51.5,TIAA Bank Field,False,,,,
+9/26/2021,2021,3,False,KC,24,30,LAC,KC,-7.0,55,Arrowhead Stadium,False,,,,
+9/26/2021,2021,3,False,LV,31,28,MIA,LVR,-3.5,45,Allegiant Stadium,False,72.0,0.0,,indoor
+9/26/2021,2021,3,False,LA,34,24,TB,TB,-1.0,55,SoFi Stadium,False,72.0,0.0,,indoor
+9/26/2021,2021,3,False,MIN,30,17,SEA,SEA,-2.0,54,U.S. Bank Stadium,False,72.0,0.0,,indoor
+9/26/2021,2021,3,False,NE,13,28,NO,NE,-3.0,43.5,Gillette Stadium,False,,,,
+9/26/2021,2021,3,False,NYG,14,17,ATL,NYG,-2.5,48,MetLife Stadium,False,,,,
+9/26/2021,2021,3,False,PIT,10,24,CIN,PIT,-2.5,42.5,Heinz Field,False,,,,
+9/26/2021,2021,3,False,SF,28,30,GB,SF,-3.0,50.5,Levi's Stadium,False,,,,
+9/26/2021,2021,3,False,TEN,25,16,IND,TEN,-5.0,47,Nissan Stadium,False,,,,
+9/27/2021,2021,3,False,DAL,41,21,PHI,DAL,-3.5,51.5,AT&T Stadium,False,72.0,0.0,,indoor
+9/30/2021,2021,4,False,CIN,24,21,JAX,CIN,-7.5,46,Paul Brown Stadium,False,,,,
+10/3/2021,2021,4,False,ATL,30,34,WAS,WAS,-2.0,47.5,Mercedes-Benz Stadium,False,72.0,0.0,,indoor
+10/3/2021,2021,4,False,BUF,40,0,HOU,BUF,-19.0,47.5,Highmark Stadium,False,,,,
+10/3/2021,2021,4,False,CHI,24,14,DET,CHI,-3.0,41.5,Soldier Field,False,,,,
+10/3/2021,2021,4,False,DAL,36,28,CAR,DAL,-4.5,51.5,AT&T Stadium,False,72.0,0.0,,indoor
+10/3/2021,2021,4,False,DEN,7,23,BAL,DEN,-1.0,44,Empower Field at Mile High,False,,,,
+10/3/2021,2021,4,False,GB,27,17,PIT,GB,-6.0,45,Lambeau Field,False,,,,
+10/3/2021,2021,4,False,LA,20,37,ARI,LAR,-4.0,54,SoFi Stadium,False,72.0,0.0,,indoor
+10/3/2021,2021,4,False,MIA,17,27,IND,MIA,-2.5,41.5,Hard Rock Stadium,False,,,,
+10/3/2021,2021,4,False,MIN,7,14,CLE,CLE,-1.0,52,U.S. Bank Stadium,False,72.0,0.0,,indoor
+10/3/2021,2021,4,False,NE,17,19,TB,TB,-6.5,49,Gillette Stadium,False,,,,
+10/3/2021,2021,4,False,NO,21,27,NYG,NO,-7.0,42.5,Caesars Superdome,False,72.0,0.0,,indoor
+10/3/2021,2021,4,False,NYJ,27,24,TEN,TEN,-6.0,44.5,MetLife Stadium,False,,,,
+10/3/2021,2021,4,False,PHI,30,42,KC,KC,-7.0,54,Lincoln Financial Field,False,,,,
+10/3/2021,2021,4,False,SF,21,28,SEA,SF,-2.5,52,Levi's Stadium,False,,,,
+10/4/2021,2021,4,False,LAC,28,14,LV,LAC,-3.0,51.5,SoFi Stadium,False,72.0,0.0,,indoor
+10/7/2021,2021,5,False,SEA,17,26,LA,LAR,-2.5,53.5,Lumen Field,False,,,,
+10/10/2021,2021,5,False,ARI,17,10,SF,ARI,-6.0,48.5,State Farm Stadium,False,72.0,0.0,,indoor
+10/10/2021,2021,5,False,ATL,27,20,NYJ,ATL,-3.0,45.5,Tottenham Hotspur Stadium,True,,,,
+10/10/2021,2021,5,False,CAR,18,21,PHI,CAR,-2.5,46,Bank of America Stadium,False,,,,
+10/10/2021,2021,5,False,CIN,22,25,GB,GB,-2.0,50,Paul Brown Stadium,False,,,,
+10/10/2021,2021,5,False,DAL,44,20,NYG,DAL,-7.0,52.5,AT&T Stadium,False,72.0,0.0,,indoor
+10/10/2021,2021,5,False,HOU,22,25,NE,NE,-8.0,39,NRG Stadium,False,72.0,0.0,,indoor
+10/10/2021,2021,5,False,JAX,19,37,TEN,TEN,-4.5,49,TIAA Bank Field,False,,,,
+10/10/2021,2021,5,False,KC,20,38,BUF,KC,-3.0,57,Arrowhead Stadium,False,,,,
+10/10/2021,2021,5,False,LV,9,20,CHI,LVR,-5.5,46,Allegiant Stadium,False,72.0,0.0,,indoor
+10/10/2021,2021,5,False,LAC,47,42,CLE,LAC,-2.5,47,SoFi Stadium,False,72.0,0.0,,indoor
+10/10/2021,2021,5,False,MIN,19,17,DET,MIN,-10.0,49.5,U.S. Bank Stadium,False,72.0,0.0,,indoor
+10/10/2021,2021,5,False,PIT,27,19,DEN,DEN,-1.5,40,Heinz Field,False,,,,
+10/10/2021,2021,5,False,TB,45,17,MIA,TB,-11.0,48,Raymond James Stadium,False,,,,
+10/10/2021,2021,5,False,WAS,22,33,NO,NO,-2.5,43.5,FedEx Field,False,,,,
+10/11/2021,2021,5,False,BAL,31,25,IND,BAL,-7.5,46.5,M&T Bank Stadium,False,,,,
+10/14/2021,2021,6,False,PHI,22,28,TB,TB,-7.0,53,Lincoln Financial Field,False,,,,
+10/17/2021,2021,6,False,BAL,34,6,LAC,BAL,-3.0,51,M&T Bank Stadium,False,,,,
+10/17/2021,2021,6,False,CAR,28,34,MIN,MIN,-2.5,45.5,Bank of America Stadium,False,,,,
+10/17/2021,2021,6,False,CHI,14,24,GB,GB,-5.5,44,Soldier Field,False,,,,
+10/17/2021,2021,6,False,CLE,14,37,ARI,CLE,-3.0,48,FirstEnergy Stadium,False,,,,
+10/17/2021,2021,6,False,DEN,24,34,LV,DEN,-5.0,45,Empower Field at Mile High,False,,,,
+10/17/2021,2021,6,False,DET,11,34,CIN,CIN,-3.5,46.5,Ford Field,False,72.0,0.0,,indoor
+10/17/2021,2021,6,False,IND,31,3,HOU,IND,-11.5,45,Lucas Oil Stadium,False,72.0,0.0,,indoor
+10/17/2021,2021,6,False,JAX,23,20,MIA,MIA,-1.5,47.5,Tottenham Hotspur Stadium,True,,,,
+10/17/2021,2021,6,False,NE,29,35,DAL,DAL,-3.5,50.5,Gillette Stadium,False,,,,
+10/17/2021,2021,6,False,NYG,11,38,LA,LAR,-7.5,49,MetLife Stadium,False,,,,
+10/17/2021,2021,6,False,PIT,23,20,SEA,PIT,-5.5,43,Heinz Field,False,,,,
+10/17/2021,2021,6,False,WAS,13,31,KC,KC,-6.5,54,FedEx Field,False,,,,
+10/18/2021,2021,6,False,TEN,34,31,BUF,BUF,-6.0,53.5,Nissan Stadium,False,,,,
+10/21/2021,2021,7,False,CLE,17,14,DEN,CLE,-2.0,40,FirstEnergy Stadium,False,,,,
+10/24/2021,2021,7,False,ARI,31,5,HOU,ARI,-20.0,47.5,State Farm Stadium,False,72.0,0.0,,indoor
+10/24/2021,2021,7,False,BAL,17,41,CIN,BAL,-6.5,46,M&T Bank Stadium,False,,,,
+10/24/2021,2021,7,False,GB,24,10,WAS,GB,-8.5,48,Lambeau Field,False,,,,
+10/24/2021,2021,7,False,LV,33,22,PHI,LVR,-1.0,48,Allegiant Stadium,False,72.0,0.0,,indoor
+10/24/2021,2021,7,False,LA,28,19,DET,LAR,-16.0,51,SoFi Stadium,False,72.0,0.0,,indoor
+10/24/2021,2021,7,False,MIA,28,30,ATL,ATL,-1.5,47.5,Hard Rock Stadium,False,,,,
+10/24/2021,2021,7,False,NE,54,13,NYJ,NE,-7.0,42.5,Gillette Stadium,False,,,,
+10/24/2021,2021,7,False,NYG,25,3,CAR,CAR,-3.0,43,MetLife Stadium,False,,,,
+10/24/2021,2021,7,False,SF,18,30,IND,SF,-3.5,41.5,Levi's Stadium,False,,,,
+10/24/2021,2021,7,False,TB,38,3,CHI,TB,-12.0,47,Raymond James Stadium,False,,,,
+10/24/2021,2021,7,False,TEN,27,3,KC,KC,-4.0,58.5,Nissan Stadium,False,,,,
+10/25/2021,2021,7,False,SEA,10,13,NO,NO,-6.0,42,Lumen Field,False,,,,
+10/28/2021,2021,8,False,ARI,21,24,GB,ARI,-6.5,51,State Farm Stadium,False,72.0,0.0,,indoor
+10/31/2021,2021,8,False,ATL,13,19,CAR,ATL,-2.5,47,Mercedes-Benz Stadium,False,72.0,0.0,,indoor
+10/31/2021,2021,8,False,BUF,26,11,MIA,BUF,-15.0,48.5,Highmark Stadium,False,,,,
+10/31/2021,2021,8,False,CHI,22,33,SF,SF,-4.5,40,Soldier Field,False,,,,
+10/31/2021,2021,8,False,CLE,10,15,PIT,CLE,-5.5,43,FirstEnergy Stadium,False,,,,
+10/31/2021,2021,8,False,DEN,17,10,WAS,DEN,-4.0,45,Empower Field at Mile High,False,,,,
+10/31/2021,2021,8,False,DET,6,44,PHI,PHI,-3.0,48,Ford Field,False,72.0,0.0,,indoor
+10/31/2021,2021,8,False,HOU,22,38,LA,LAR,-16.5,47,NRG Stadium,False,72.0,0.0,,indoor
+10/31/2021,2021,8,False,IND,31,34,TEN,IND,-3.0,51,Lucas Oil Stadium,False,72.0,0.0,,indoor
+10/31/2021,2021,8,False,LAC,24,27,NE,LAC,-3.5,50.5,SoFi Stadium,False,72.0,0.0,,indoor
+10/31/2021,2021,8,False,MIN,16,20,DAL,MIN,-4.0,49,U.S. Bank Stadium,False,72.0,0.0,,indoor
+10/31/2021,2021,8,False,NO,36,27,TB,TB,-4.0,48,Caesars Superdome,False,72.0,0.0,,indoor
+10/31/2021,2021,8,False,NYJ,34,31,CIN,CIN,-11.5,43,MetLife Stadium,False,,,,
+10/31/2021,2021,8,False,SEA,31,7,JAX,SEA,-4.0,44.5,Lumen Field,False,,,,
+11/1/2021,2021,8,False,KC,20,17,NYG,KC,-10.5,53,Arrowhead Stadium,False,,,,
+11/4/2021,2021,9,False,IND,45,30,NYJ,IND,-10.0,45.5,Lucas Oil Stadium,False,72.0,0.0,,indoor
+11/7/2021,2021,9,False,BAL,34,31,MIN,BAL,-7.0,51,M&T Bank Stadium,False,,,,
+11/7/2021,2021,9,False,CAR,6,24,NE,NE,-3.5,41.5,Bank of America Stadium,False,,,,
+11/7/2021,2021,9,False,CIN,16,41,CLE,CIN,-2.0,47.5,Paul Brown Stadium,False,,,,
+11/7/2021,2021,9,False,DAL,16,30,DEN,DAL,-10.0,50,AT&T Stadium,False,72.0,0.0,,indoor
+11/7/2021,2021,9,False,JAX,9,6,BUF,BUF,-14.5,48.5,TIAA Bank Field,False,,,,
+11/7/2021,2021,9,False,KC,13,7,GB,KC,-7.0,48,Arrowhead Stadium,False,,,,
+11/7/2021,2021,9,False,LA,16,28,TEN,LAR,-7.0,53,SoFi Stadium,False,72.0,0.0,,indoor
+11/7/2021,2021,9,False,MIA,17,9,HOU,MIA,-4.0,45,Hard Rock Stadium,False,,,,
+11/7/2021,2021,9,False,NO,25,27,ATL,NO,-6.5,43,Caesars Superdome,False,72.0,0.0,,indoor
+11/7/2021,2021,9,False,NYG,23,16,LV,LVR,-3.0,47,MetLife Stadium,False,,,,
+11/7/2021,2021,9,False,PHI,24,27,LAC,LAC,-1.0,49.5,Lincoln Financial Field,False,,,,
+11/7/2021,2021,9,False,SF,17,31,ARI,SF,-5.5,44.5,Levi's Stadium,False,,,,
+11/8/2021,2021,9,False,PIT,29,27,CHI,PIT,-7.0,40,Heinz Field,False,,,,
+11/11/2021,2021,10,False,MIA,22,10,BAL,BAL,-8.5,47,Hard Rock Stadium,False,,,,
+11/14/2021,2021,10,False,ARI,10,34,CAR,ARI,-7.0,41.5,State Farm Stadium,False,72.0,0.0,,indoor
+11/14/2021,2021,10,False,DAL,43,3,ATL,DAL,-7.5,55,AT&T Stadium,False,72.0,0.0,,indoor
+11/14/2021,2021,10,False,DEN,13,30,PHI,DEN,-1.0,44.5,Empower Field at Mile High,False,,,,
+11/14/2021,2021,10,False,GB,17,0,SEA,GB,-3.0,49,Lambeau Field,False,,,,
+11/14/2021,2021,10,False,IND,23,17,JAX,IND,-10.5,48,Lucas Oil Stadium,False,72.0,0.0,,indoor
+11/14/2021,2021,10,False,LV,14,41,KC,KC,-2.5,54,Allegiant Stadium,False,72.0,0.0,,indoor
+11/14/2021,2021,10,False,LAC,20,27,MIN,LAC,-3.0,53.5,SoFi Stadium,False,72.0,0.0,,indoor
+11/14/2021,2021,10,False,NE,45,7,CLE,NE,-2.5,45,Gillette Stadium,False,,,,
+11/14/2021,2021,10,False,NYJ,17,45,BUF,BUF,-13.5,48.5,MetLife Stadium,False,,,,
+11/14/2021,2021,10,False,PIT,16,16,DET,PIT,-6.0,40.5,Heinz Field,False,,,,
+11/14/2021,2021,10,False,TEN,23,21,NO,TEN,-3.0,42.5,Nissan Stadium,False,,,,
+11/14/2021,2021,10,False,WAS,29,19,TB,TB,-10.0,50.5,FedEx Field,False,,,,
+11/15/2021,2021,10,False,SF,31,10,LA,LAR,-3.5,50,Levi's Stadium,False,,,,
+11/18/2021,2021,11,False,ATL,0,25,NE,NE,-7.0,47,Mercedes-Benz Stadium,False,72.0,0.0,,indoor
+11/21/2021,2021,11,False,BUF,15,41,IND,BUF,-7.0,49.5,Highmark Stadium,False,,,,
+11/21/2021,2021,11,False,CAR,21,27,WAS,CAR,-3.0,43,Bank of America Stadium,False,,,,
+11/21/2021,2021,11,False,CHI,13,16,BAL,BAL,-1.0,40.5,Soldier Field,False,,,,
+11/21/2021,2021,11,False,CLE,13,10,DET,CLE,-13.5,42.5,FirstEnergy Stadium,False,,,,
+11/21/2021,2021,11,False,JAX,10,30,SF,SF,-6.5,45.5,TIAA Bank Field,False,,,,
+11/21/2021,2021,11,False,KC,19,9,DAL,KC,-2.5,56,Arrowhead Stadium,False,,,,
+11/21/2021,2021,11,False,LV,13,32,CIN,CIN,-2.0,50.5,Allegiant Stadium,False,72.0,0.0,,indoor
+11/21/2021,2021,11,False,LAC,41,37,PIT,LAC,-6.0,47.5,SoFi Stadium,False,72.0,0.0,,indoor
+11/21/2021,2021,11,False,MIN,34,31,GB,GB,-1.0,47,U.S. Bank Stadium,False,72.0,0.0,,indoor
+11/21/2021,2021,11,False,NYJ,17,24,MIA,MIA,-3.5,44.5,MetLife Stadium,False,,,,
+11/21/2021,2021,11,False,PHI,40,29,NO,PHI,-3.0,42,Lincoln Financial Field,False,,,,
+11/21/2021,2021,11,False,SEA,13,23,ARI,SEA,-4.5,45,Lumen Field,False,,,,
+11/21/2021,2021,11,False,TEN,13,22,HOU,TEN,-10.0,44.5,Nissan Stadium,False,,,,
+11/22/2021,2021,11,False,TB,30,10,NYG,TB,-11.5,50,Raymond James Stadium,False,,,,
+11/25/2021,2021,12,False,DAL,33,36,LV,DAL,-7.0,51,AT&T Stadium,False,72.0,0.0,,indoor
+11/25/2021,2021,12,False,DET,14,16,CHI,CHI,-2.0,41.5,Ford Field,False,72.0,0.0,,indoor
+11/25/2021,2021,12,False,NO,6,31,BUF,BUF,-7.0,45,Caesars Superdome,False,72.0,0.0,,indoor
+11/28/2021,2021,12,False,BAL,16,10,CLE,BAL,-3.0,47.5,M&T Bank Stadium,False,,,,
+11/28/2021,2021,12,False,CIN,41,10,PIT,CIN,-3.5,43.5,Paul Brown Stadium,False,,,,
+11/28/2021,2021,12,False,DEN,28,13,LAC,LAC,-3.0,47,Empower Field at Mile High,False,,,,
+11/28/2021,2021,12,False,GB,36,28,LA,LAR,-2.0,46.5,Lambeau Field,False,,,,
+11/28/2021,2021,12,False,HOU,14,21,NYJ,HOU,-3.0,44.5,NRG Stadium,False,72.0,0.0,,indoor
+11/28/2021,2021,12,False,IND,31,38,TB,TB,-3.0,53,Lucas Oil Stadium,False,72.0,0.0,,indoor
+11/28/2021,2021,12,False,JAX,14,21,ATL,ATL,-1.5,46,TIAA Bank Field,False,,,,
+11/28/2021,2021,12,False,MIA,33,10,CAR,CAR,-1.0,41,Hard Rock Stadium,False,,,,
+11/28/2021,2021,12,False,NE,36,13,TEN,NE,-7.0,43,Gillette Stadium,False,,,,
+11/28/2021,2021,12,False,NYG,13,7,PHI,PHI,-4.0,45,MetLife Stadium,False,,,,
+11/28/2021,2021,12,False,SF,34,26,MIN,SF,-4.0,49,Levi's Stadium,False,,,,
+11/29/2021,2021,12,False,WAS,17,15,SEA,SEA,-1.5,46.5,FedEx Field,False,,,,
+12/2/2021,2021,13,False,NO,17,27,DAL,DAL,-6.5,45.5,Caesars Superdome,False,72.0,0.0,,indoor
+12/5/2021,2021,13,False,ATL,17,30,TB,TB,-10.5,51,Mercedes-Benz Stadium,False,72.0,0.0,,indoor
+12/5/2021,2021,13,False,CHI,22,33,ARI,ARI,-7.5,43,Soldier Field,False,,,,
+12/5/2021,2021,13,False,CIN,22,41,LAC,CIN,-2.5,49.5,Paul Brown Stadium,False,,,,
+12/5/2021,2021,13,False,DET,29,27,MIN,MIN,-7.0,47,Ford Field,False,72.0,0.0,,indoor
+12/5/2021,2021,13,False,HOU,0,31,IND,IND,-10.0,45.5,NRG Stadium,False,72.0,0.0,,indoor
+12/5/2021,2021,13,False,KC,22,9,DEN,KC,-8.5,46.5,Arrowhead Stadium,False,,,,
+12/5/2021,2021,13,False,LV,15,17,WAS,LVR,-1.5,47.5,Allegiant Stadium,False,72.0,0.0,,indoor
+12/5/2021,2021,13,False,LA,37,7,JAX,LAR,-14.0,48,SoFi Stadium,False,72.0,0.0,,indoor
+12/5/2021,2021,13,False,MIA,20,9,NYG,MIA,-7.0,40,Hard Rock Stadium,False,,,,
+12/5/2021,2021,13,False,NYJ,18,33,PHI,PHI,-5.0,44,MetLife Stadium,False,,,,
+12/5/2021,2021,13,False,PIT,20,19,BAL,BAL,-4.0,44,Heinz Field,False,,,,
+12/5/2021,2021,13,False,SEA,30,23,SF,SF,-3.0,45,Lumen Field,False,,,,
+12/6/2021,2021,13,False,BUF,10,14,NE,BUF,-3.0,39.5,Highmark Stadium,False,36.0,19.0,59.0,
+12/9/2021,2021,14,False,MIN,36,28,PIT,MIN,-3.5,45,U.S. Bank Stadium,False,72.0,0.0,,indoor
+12/12/2021,2021,14,False,CAR,21,29,ATL,CAR,-2.5,41.5,Bank of America Stadium,False,,,,
+12/12/2021,2021,14,False,CIN,23,26,SF,SF,-1.5,49,Paul Brown Stadium,False,,,,
+12/12/2021,2021,14,False,CLE,24,22,BAL,CLE,-3.0,44,FirstEnergy Stadium,False,,,,
+12/12/2021,2021,14,False,DEN,38,10,DET,DEN,-12.5,42,Empower Field at Mile High,False,,,,
+12/12/2021,2021,14,False,GB,45,30,CHI,GB,-12.0,43,Lambeau Field,False,,,,
+12/12/2021,2021,14,False,HOU,13,33,SEA,SEA,-9.5,41,NRG Stadium,False,72.0,0.0,,indoor
+12/12/2021,2021,14,False,KC,48,9,LV,KC,-9.5,48,Arrowhead Stadium,False,,,,
+12/12/2021,2021,14,False,LAC,37,21,NYG,LAC,-9.0,43.5,SoFi Stadium,False,72.0,0.0,,indoor
+12/12/2021,2021,14,False,NYJ,9,30,NO,NO,-4.5,42,MetLife Stadium,False,,,,
+12/12/2021,2021,14,False,TB,33,27,BUF,TB,-3.5,52.5,Raymond James Stadium,False,,,,
+12/12/2021,2021,14,False,TEN,20,0,JAX,TEN,-8.5,44.5,Nissan Stadium,False,,,,
+12/12/2021,2021,14,False,WAS,20,27,DAL,DAL,-6.5,48,FedEx Field,False,,,,
+12/13/2021,2021,14,False,ARI,23,30,LA,ARI,-3.0,51,State Farm Stadium,False,72.0,0.0,,indoor
+12/16/2021,2021,15,False,LAC,28,34,KC,KC,-3.0,54,SoFi Stadium,False,72.0,0.0,,indoor
+12/18/2021,2021,15,False,IND,27,17,NE,IND,-1.5,46,Lucas Oil Stadium,False,72.0,0.0,,indoor
+12/19/2021,2021,15,False,BAL,30,31,GB,GB,-9.0,45.5,M&T Bank Stadium,False,43.0,11.0,52.0,
+12/19/2021,2021,15,False,BUF,31,14,CAR,BUF,-14.5,43,Highmark Stadium,False,30.0,8.0,69.0,
+12/19/2021,2021,15,False,DEN,10,15,CIN,DEN,-3.0,44,Empower Field at Mile High,False,61.0,19.0,9.0,
+12/19/2021,2021,15,False,DET,30,12,ARI,ARI,-13.0,48.5,Ford Field,False,72.0,0.0,,indoor
+12/19/2021,2021,15,False,JAX,16,30,HOU,JAX,-6.0,40,TIAA Bank Field,False,80.0,12.0,71.0,
+12/19/2021,2021,15,False,MIA,31,24,NYJ,MIA,-10.0,42,Hard Rock Stadium,False,82.0,9.0,70.0,
+12/19/2021,2021,15,False,NYG,6,21,DAL,DAL,-12.0,43.5,MetLife Stadium,False,37.0,8.0,54.0,
+12/19/2021,2021,15,False,PIT,19,13,TEN,PIT,-1.0,44,Heinz Field,False,32.0,11.0,74.0,
+12/19/2021,2021,15,False,SF,31,13,ATL,SF,-9.0,47.5,Levi's Stadium,False,46.0,0.0,81.0,
+12/19/2021,2021,15,False,TB,0,9,NO,TB,-11.5,45.5,Raymond James Stadium,False,75.0,0.0,99.0,
+12/20/2021,2021,15,False,CHI,9,17,MIN,MIN,-7.0,47,Soldier Field,False,37.0,8.0,75.0,
+12/20/2021,2021,15,False,CLE,14,16,LV,LVR,-1.0,40.5,FirstEnergy Stadium,False,40.0,8.0,47.0,
+12/21/2021,2021,15,False,LA,20,10,SEA,LAR,-7.0,47,SoFi Stadium,False,72.0,0.0,,indoor
+12/21/2021,2021,15,False,PHI,27,17,WAS,PHI,-10.0,39.5,Lincoln Financial Field,False,42.0,7.0,57.0,
+12/23/2021,2021,16,False,TEN,20,17,SF,SF,-3.5,45.5,Nissan Stadium,False,48.0,7.0,46.0,
+12/25/2021,2021,16,False,ARI,16,22,IND,ARI,-3.0,48,State Farm Stadium,False,72.0,0.0,,indoor
+12/25/2021,2021,16,False,GB,24,22,CLE,GB,-7.5,46.5,Lambeau Field,False,35.0,11.0,49.0,
+12/26/2021,2021,16,False,ATL,20,16,DET,ATL,-7.5,42.5,Mercedes-Benz Stadium,False,72.0,0.0,,indoor
+12/26/2021,2021,16,False,CAR,6,32,TB,TB,-11.0,44.5,Bank of America Stadium,False,73.0,8.0,41.0,
+12/26/2021,2021,16,False,CIN,41,21,BAL,CIN,-7.5,43.5,Paul Brown Stadium,False,52.0,0.0,63.0,
+12/26/2021,2021,16,False,DAL,56,14,WAS,DAL,-10.0,46,AT&T Stadium,False,72.0,0.0,,indoor
+12/26/2021,2021,16,False,HOU,41,29,LAC,LAC,-13.0,45.5,NRG Stadium,False,72.0,0.0,,indoor
+12/26/2021,2021,16,False,KC,36,10,PIT,KC,-10.0,44.5,Arrowhead Stadium,False,60.0,22.0,64.0,
+12/26/2021,2021,16,False,LV,17,13,DEN,DEN,-1.0,41.5,Allegiant Stadium,False,72.0,0.0,,indoor
+12/26/2021,2021,16,False,MIN,23,30,LA,LAR,-3.0,48.5,U.S. Bank Stadium,False,72.0,0.0,,indoor
+12/26/2021,2021,16,False,NE,21,33,BUF,NE,-1.0,43.5,Gillette Stadium,False,38.0,13.0,79.0,
+12/26/2021,2021,16,False,NYJ,26,21,JAX,NYJ,-2.5,43,MetLife Stadium,False,47.0,0.0,49.0,
+12/26/2021,2021,16,False,PHI,34,10,NYG,PHI,-11.0,41,Lincoln Financial Field,False,53.0,9.0,46.0,
+12/26/2021,2021,16,False,SEA,24,25,CHI,SEA,-7.0,41,Lumen Field,False,25.0,11.0,85.0,
+12/27/2021,2021,16,False,NO,3,20,MIA,MIA,-3.0,37.5,Caesars Superdome,False,72.0,0.0,,indoor
+1/2/2022,2021,17,False,BAL,19,20,LA,LAR,-7.0,46.5,M&T Bank Stadium,False,59.0,6.0,92.0,
+1/2/2022,2021,17,False,BUF,29,15,ATL,BUF,-14.0,46,Highmark Stadium,False,26.0,11.0,81.0,
+1/2/2022,2021,17,False,CHI,29,3,NYG,CHI,-6.5,36.5,Soldier Field,False,25.0,13.0,74.0,
+1/2/2022,2021,17,False,CIN,34,31,KC,KC,-3.5,51,Paul Brown Stadium,False,33.0,13.0,81.0,
+1/2/2022,2021,17,False,DAL,22,25,ARI,DAL,-6.5,52.5,AT&T Stadium,False,72.0,0.0,,indoor
+1/2/2022,2021,17,False,GB,37,10,MIN,GB,-13.0,42.5,Lambeau Field,False,11.0,9.0,60.0,
+1/2/2022,2021,17,False,IND,20,23,LV,IND,-8.5,46.5,Lucas Oil Stadium,False,72.0,0.0,,indoor
+1/2/2022,2021,17,False,LAC,34,13,DEN,LAC,-7.5,46,SoFi Stadium,False,72.0,0.0,,indoor
+1/2/2022,2021,17,False,NE,50,10,JAX,NE,-17.5,41.5,Gillette Stadium,False,46.0,4.0,100.0,rain
+1/2/2022,2021,17,False,NO,18,10,CAR,NO,-7.0,37,Caesars Superdome,False,72.0,0.0,,indoor
+1/2/2022,2021,17,False,NYJ,24,28,TB,TB,-14.0,47.5,MetLife Stadium,False,57.0,9.0,82.0,
+1/2/2022,2021,17,False,SF,23,7,HOU,SF,-13.5,44.5,Levi's Stadium,False,50.0,6.0,58.0,
+1/2/2022,2021,17,False,SEA,51,29,DET,SEA,-8.5,41.5,Lumen Field,False,37.0,0.0,97.0,
+1/2/2022,2021,17,False,TEN,34,3,MIA,TEN,-3.0,41,Nissan Stadium,False,43.0,13.0,93.0,
+1/2/2022,2021,17,False,WAS,16,20,PHI,PHI,-4.5,44.5,FedEx Field,False,62.0,4.0,91.0,
+1/3/2022,2021,17,False,PIT,26,14,CLE,PIT,-2.0,42,Heinz Field,False,25.0,12.0,60.0,
+1/8/2022,2021,18,False,DEN,24,28,KC,KC,-11.5,44.5,Empower Field at Mile High,False,41.0,4.0,57.0,
+1/8/2022,2021,18,False,PHI,26,51,DAL,DAL,-6.0,46.5,Lincoln Financial Field,False,31.0,8.0,43.0,
+1/9/2022,2021,18,False,ARI,30,38,SEA,ARI,-5.0,48.5,State Farm Stadium,False,72.0,0.0,,indoor
+1/9/2022,2021,18,False,ATL,20,30,NO,NO,-4.5,40,Mercedes-Benz Stadium,False,72.0,0.0,,indoor
+1/9/2022,2021,18,False,BAL,13,16,PIT,BAL,-3.0,41,M&T Bank Stadium,False,36.0,0.0,100.0,rain
+1/9/2022,2021,18,False,BUF,27,10,NYJ,BUF,-16.0,42,Highmark Stadium,False,36.0,19.0,67.0,
+1/9/2022,2021,18,False,CLE,21,16,CIN,CLE,-6.5,38,FirstEnergy Stadium,False,36.0,33.0,89.0,
+1/9/2022,2021,18,False,DET,37,30,GB,GB,-4.0,45,Ford Field,False,72.0,0.0,,indoor
+1/9/2022,2021,18,False,HOU,25,28,TEN,TEN,-10.5,43,NRG Stadium,False,72.0,0.0,,indoor
+1/9/2022,2021,18,False,JAX,26,11,IND,IND,-14.0,43,TIAA Bank Field,False,76.0,19.0,60.0,
+1/9/2022,2021,18,False,LV,35,32,LAC,LAC,-3.0,49.5,Allegiant Stadium,False,72.0,0.0,,indoor
+1/9/2022,2021,18,False,LA,24,27,SF,SF,-3.5,46.5,SoFi Stadium,False,72.0,0.0,,indoor
+1/9/2022,2021,18,False,MIA,33,24,NE,NE,-6.0,41,Hard Rock Stadium,False,75.0,8.0,79.0,
+1/9/2022,2021,18,False,MIN,31,17,CHI,MIN,-3.5,44.5,U.S. Bank Stadium,False,72.0,0.0,,indoor
+1/9/2022,2021,18,False,NYG,7,22,WAS,WAS,-6.0,36,MetLife Stadium,False,38.0,0.0,64.0,
+1/9/2022,2021,18,False,TB,41,17,CAR,TB,-10.5,43.5,Raymond James Stadium,False,80.0,4.0,99.0,
+1/15/2022,2021,Wildcard,True,BUF,47,17,NE,BUF,-4.5,43,Highmark Stadium,False,7.0,8.0,66.0,
+1/15/2022,2021,Wildcard,True,CIN,26,19,LV,CIN,-6.0,48.5,Paul Brown Stadium,False,31.0,12.0,63.0,
+1/16/2022,2021,Wildcard,True,DAL,17,23,SF,DAL,-3.5,51,AT&T Stadium,False,72.0,0.0,,indoor
+1/16/2022,2021,Wildcard,True,KC,42,21,PIT,KC,-12.5,47,Arrowhead Stadium,False,30.0,8.0,78.0,
+1/16/2022,2021,Wildcard,True,TB,31,15,PHI,TB,-7.0,47,Raymond James Stadium,False,66.0,21.0,52.0,
+1/17/2022,2021,Wildcard,True,LA,34,11,ARI,LAR,-3.5,49,SoFi Stadium,False,72.0,0.0,,indoor
+1/22/2022,2021,Division,True,GB,10,13,SF,GB,-5.5,47,Lambeau Field,False,15.0,12.0,53.0,
+1/22/2022,2021,Division,True,TEN,16,19,CIN,TEN,-4.0,48.5,Nissan Stadium,False,35.0,0.0,43.0,
+1/23/2022,2021,Division,True,KC,42,36,BUF,KC,-2.5,54,Arrowhead Stadium,False,35.0,6.0,54.0,
+1/23/2022,2021,Division,True,TB,27,30,LA,TB,-3.0,48,Raymond James Stadium,False,50.0,11.0,69.0,
+1/30/2022,2021,Conference,True,KC,24,27,CIN,KC,-7.0,54.5,Arrowhead Stadium,False,41.0,4.0,41.0,
+1/30/2022,2021,Conference,True,LA,20,17,SF,LAR,-3.5,46,SoFi Stadium,False,72.0,0.0,,indoor
+2/13/2022,2021,Superbowl,True,CIN,20,23,LA,LAR,-4.5,48.5,SoFi Stadium,True,72.0,0.0,,indoor
