@@ -226,7 +226,7 @@ def main():
     events = fetch_events(api_key, args.sport, args.regions, args.markets)
     df_new = parse_rows(events, want_markets)
 
-    col_order = [
+    base_cols = [
         "season", "week", "week_label", "schedule_date",
         "home_team", "away_team",
         "ml_home", "ml_away", "decimal_home", "decimal_away",
@@ -237,7 +237,7 @@ def main():
     ]
 
     if df_new.empty:
-        parsed = pd.DataFrame(columns=col_order)
+        parsed = pd.DataFrame(columns=base_cols)
     else:
         parsed = df_new.copy()
         parsed["schedule_date"] = pd.to_datetime(parsed["schedule_date"], errors="coerce", utc=True)
@@ -247,54 +247,64 @@ def main():
         parsed["week_label"] = [lbl for (w, lbl) in weeks]
         parsed = parsed[parsed["week"].notna()]
         parsed = apply_price_factor(parsed, args.price_factor)
-        parsed = parsed.reindex(columns=col_order)
+        # NO reindex estricto: mantenemos solo asegurar columnas base si faltan
+        for c in base_cols:
+            if c not in parsed.columns:
+                parsed[c] = np.nan
 
-    # Leer lo previo (si existe)
+    # Leer lo previo tal cual (para preservar columnas extra como score_home/score_away)
     if os.path.exists(live_path):
         try:
             prev = pd.read_csv(live_path, low_memory=False)
         except Exception:
-            prev = pd.DataFrame(columns=col_order)
+            prev = pd.DataFrame(columns=base_cols)
     else:
-        prev = pd.DataFrame(columns=col_order)
-    prev = prev.reindex(columns=col_order)
+        prev = pd.DataFrame(columns=base_cols)
 
     # Determinar overrides efectivos
     target_season = args.season if args.season is not None else cur_season
     target_week   = args.week   if args.week   is not None else cur_week
 
-    # ✅ Filtrar SOLO lo nuevo (parsed) a la semana objetivo (si se pide).
+    # Filtrar SOLO lo nuevo a la semana objetivo
     if args.only_current_week and pd.notna(target_week):
         before = len(parsed)
         parsed = parsed[(parsed["season"] == target_season) & (parsed["week"] == target_week)]
         print(f"[odds] parsed week-filter {target_season}/{target_week}: {before} → {len(parsed)} rows")
 
-    # Combinar: agregar/actualizar sin borrar semanas anteriores
+    # Concatenar con unión de columnas (preserva score_home/score_away u otras columnas previas)
     if parsed.empty:
         combined = prev.copy()
     else:
-        combined = pd.concat([prev, parsed], ignore_index=True)
+        combined = pd.concat([prev, parsed], ignore_index=True, sort=False)
 
     # Completar week/labels faltantes si hubiera
     if "schedule_date" in combined.columns:
         combined["schedule_date"] = pd.to_datetime(combined["schedule_date"], errors="coerce", utc=True)
-        mask = combined["week"].isna() & combined["schedule_date"].notna()
-        if mask.any():
+        mask = combined.get("week").isna() & combined["schedule_date"].notna() if "week" in combined.columns else False
+        if isinstance(mask, pd.Series) and mask.any():
             w2 = combined.loc[mask, "schedule_date"].apply(infer_week_fields)
             combined.loc[mask, "week"] = [w for (w, lbl) in w2]
             combined.loc[mask, "week_label"] = [lbl for (w, lbl) in w2]
 
-    # De-dup por event_id; si no hay, por claves lógicas
+    # De-dup por event_id si hay; si no, por claves lógicas
     if "event_id" in combined.columns and combined["event_id"].notna().any():
         combined = combined.drop_duplicates(subset=["event_id"], keep="last")
     else:
+        for k in ["season","week","home_team","away_team"]:
+            if k not in combined.columns:
+                combined[k] = np.nan
         combined = combined.drop_duplicates(subset=["season","week","home_team","away_team"], keep="last")
 
-    # Orden estable
-    combined = combined.sort_values(["season","week","schedule_date","home_team"], kind="mergesort")
-    combined["season"] = pd.to_numeric(combined["season"], errors="coerce").astype("Int64")
-    combined["week"] = pd.to_numeric(combined["week"], errors="coerce").astype("Int64")
-    combined = combined.reindex(columns=col_order)
+    # Orden estable; NO forzamos columnas (para no borrar scores)
+    order_keys = [k for k in ["season","week","schedule_date","home_team"] if k in combined.columns]
+    if order_keys:
+        combined = combined.sort_values(order_keys, kind="mergesort")
+
+    # Tipos
+    if "season" in combined.columns:
+        combined["season"] = pd.to_numeric(combined["season"], errors="coerce").astype("Int64")
+    if "week" in combined.columns:
+        combined["week"] = pd.to_numeric(combined["week"], errors="coerce").astype("Int64")
 
     combined.to_csv(live_path, index=False)
     print(f"[odds] wrote {live_path} | rows={len(combined)} | factor={args.price_factor}")
