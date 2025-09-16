@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from nfl_dash.live_scores import fetch_espn_scoreboard_df
 from nfl_dash.components import game_card
 
+# Usamos ET para toda la lógica del calendario NFL
 ET = ZoneInfo("America/New_York")
 
 # =========================
@@ -25,16 +26,16 @@ def _week1_tnf_et(year: int) -> datetime:
 
 def _tuesday_anchor_et(year: int) -> datetime:
     """
-    Ancla 'histórica' del cálculo: martes 00:00 ET de la semana del TNF
-    (sirve para indexar las semanas como 1..22).
+    Ancla 'histórica' del cálculo: martes 00:00 ET de la semana del TNF.
+    Sirve para indexar las semanas 1..22 con un cálculo determinista.
     """
     tnf = _week1_tnf_et(year)
     week_monday = (tnf - timedelta(days=tnf.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     return week_monday + timedelta(days=1)  # Tue 00:00 ET
 
-# --- Nuevo: corte diferido al miércoles 02:00 ET (≈ 03:00 BRT)
+# --- Corte diferido: MIÉRCOLES 02:00 ET (≈ 03:00 BRT)
 CUTOVER_DOW_ET = 2   # 0=Mon,1=Tue,2=Wed
-CUTOVER_HOUR_ET = 2  # 02:00 ET -> 03:00 BRT aprox.
+CUTOVER_HOUR_ET = 2  # 02:00 ET
 
 def _after_cutover_et(dt_utc: datetime) -> bool:
     """
@@ -49,29 +50,35 @@ def _after_cutover_et(dt_utc: datetime) -> bool:
 
 def _autodetect_week_with_cutover(season: int, now_utc: datetime | None = None) -> int:
     """
-    Semana 'efectiva': antes del corte (miércoles 02:00 ET) seguimos en la semana anterior.
+    Semana 'efectiva' para el dashboard Live:
+    - Calcula la semana natural con ancla del martes.
+    - Si aún NO pasamos el corte del miércoles 02:00 ET, usa (semana natural - 1).
     """
     if now_utc is None:
         now_utc = datetime.now(timezone.utc)
+
     now_et  = now_utc.astimezone(ET)
     anchor  = _tuesday_anchor_et(season)
 
-    # Semana 'natural' basada en ancla del martes
+    # Semana natural basada en el ancla
     wk_nat = 1 if now_et < anchor else int(((now_et - anchor).days // 7) + 1)
     wk_nat = max(1, min(22, wk_nat))
 
-    # Si aún NO pasamos el corte -> usa la semana anterior
+    # Ajuste por corte diferido
     if not _after_cutover_et(now_utc):
         return max(1, wk_nat - 1)
     return wk_nat
 
+# =========================
+# Helpers de presentación
+# =========================
 def _day_bucket(et_ts: pd.Timestamp) -> str:
     d = et_ts.tz_convert(ET)
     return {3:"Thursday", 5:"Saturday", 6:"Sunday", 0:"Monday"}.get(d.weekday(), d.strftime("%A"))
 
 def _sun_slot(et_ts: pd.Timestamp) -> tuple[int, str]:
     d = et_ts.tz_convert(ET)
-    label = d.strftime("%I:%M %p").lstrip("0")
+    label = d.strftime("%I:%M %p").lstrip("0")  # sin cero a la izquierda
     return d.hour * 60 + d.minute, f"Sun {label}"
 
 def _suggest_refresh_interval(df: pd.DataFrame, now_et: datetime) -> int | None:
@@ -105,7 +112,11 @@ def _suggest_refresh_interval(df: pd.DataFrame, now_et: datetime) -> int | None:
     # 5) fuera de ventanas → sin refresh
     return None
 
+# =========================
+# Render principal
+# =========================
 def render(season: int):
+    # >>>>>>>>> CORAZÓN DEL FIX: usamos la semana con corte diferido
     week = _autodetect_week_with_cutover(int(season))
 
     # Header “Live · Week X”
@@ -152,7 +163,7 @@ def render(season: int):
             from streamlit_extras.st_autorefresh import st_autorefresh
             st_autorefresh(interval=interval * 1000, key=f"live_autorefresh_{season}_{week}_{interval}")
         except Exception:
-            pass  # si no está instalado, simplemente no refresca automático
+            pass  # si no está instalado, no refresca automático
 
     # Orden: día → en vivo primero → hora
     day_order = {"Thursday": 1, "Saturday": 2, "Sunday": 3, "Monday": 4}
