@@ -9,7 +9,8 @@ concurrency:
 
 on:
   schedule:
-    - cron: "5 15 * * 3"
+    # Martes 05:00 UTC ≈ martes 00:00 ET
+    - cron: "0 5 * * 2"
   workflow_dispatch:
     inputs:
       season:
