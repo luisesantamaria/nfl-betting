@@ -7,6 +7,7 @@ HEADERS = {"Ocp-Apim-Subscription-Key": API_KEY}
 
 BASE_URL = "https://api.sportsdata.io/v3/nfl/odds/json/GameOddsByWeek/{season}/{stype}/{week}"
 
+# --- Map full names -> abbreviations ---
 TEAM_NAME_TO_ABBR = {
     "Arizona Cardinals": "ARI",
     "Atlanta Falcons": "ATL",
@@ -51,6 +52,7 @@ def fetch_week_odds(season: int, stype: int, week: int):
     url = BASE_URL.format(season=season, stype=stype, week=week)
     r = requests.get(url, headers=HEADERS, timeout=30)
     if r.status_code != 200:
+        print(f"⚠️ API call failed: {url} ({r.status_code})")
         return []
     data = r.json()
     rows = []
@@ -74,13 +76,21 @@ def fetch_week_odds(season: int, stype: int, week: int):
 
 def main():
     season = int(os.environ.get("TARGET_SEASON", 2025))
+    week_override = os.environ.get("WEEK")
     out_path = f"data/live/odds.csv"
 
     all_rows = []
-    for stype, weeks in [(1, range(1,19)), (3, range(1,5))]:
-        for wk in weeks:
-            all_rows.extend(fetch_week_odds(season, stype, wk))
-            time.sleep(0.35)
+
+    if week_override:
+        # Si hay override, solo traemos esa semana
+        stype = 1 if int(week_override) <= 18 else 3
+        all_rows.extend(fetch_week_odds(season, stype, int(week_override)))
+    else:
+        # Si no, traemos toda la temporada (reg + playoffs)
+        for stype, weeks in [(1, range(1,19)), (3, range(1,5))]:
+            for wk in weeks:
+                all_rows.extend(fetch_week_odds(season, stype, wk))
+                time.sleep(0.35)
 
     df = pd.DataFrame(all_rows)
     if df.empty:
