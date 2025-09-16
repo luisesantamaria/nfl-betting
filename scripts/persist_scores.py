@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# scripts/persists_score.py
+# scripts/persist_scores.py
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -15,6 +15,62 @@ from nfl_dash.utils import norm_abbr
 
 ET = ZoneInfo("America/New_York")
 ODDS_PATH = os.path.join("data", "live", "odds.csv")
+
+# -------------------------
+# Mapeo a abreviaturas NFL
+# -------------------------
+TEAM_NAME_TO_ABBR = {
+    "Arizona Cardinals": "ARI",
+    "Atlanta Falcons": "ATL",
+    "Baltimore Ravens": "BAL",
+    "Buffalo Bills": "BUF",
+    "Carolina Panthers": "CAR",
+    "Chicago Bears": "CHI",
+    "Cincinnati Bengals": "CIN",
+    "Cleveland Browns": "CLE",
+    "Dallas Cowboys": "DAL",
+    "Denver Broncos": "DEN",
+    "Detroit Lions": "DET",
+    "Green Bay Packers": "GB",
+    "Houston Texans": "HOU",
+    "Indianapolis Colts": "IND",
+    "Jacksonville Jaguars": "JAX",
+    "Kansas City Chiefs": "KC",
+    "Las Vegas Raiders": "LV",
+    "Los Angeles Chargers": "LAC",
+    "Los Angeles Rams": "LA",
+    "Miami Dolphins": "MIA",
+    "Minnesota Vikings": "MIN",
+    "New England Patriots": "NE",
+    "New Orleans Saints": "NO",
+    "New York Giants": "NYG",
+    "New York Jets": "NYJ",
+    "Philadelphia Eagles": "PHI",
+    "Pittsburgh Steelers": "PIT",
+    "San Francisco 49ers": "SF",
+    "Seattle Seahawks": "SEA",
+    "Tampa Bay Buccaneers": "TB",
+    "Tennessee Titans": "TEN",
+    "Washington Commanders": "WAS",
+}
+
+def normalize_team(s: str) -> str:
+    """
+    Normaliza nombres que vienen de ESPN (a veces completos) a abreviatura.
+    - Si ya es abreviatura, la respeta.
+    - Si es nombre completo, mapea -> abbr.
+    - Luego pasa por norm_abbr para unificar variantes (e.g., STL->LA, SD->LAC).
+    """
+    if not isinstance(s, str):
+        return s
+    raw = s.strip()
+    # Si ya viene abreviado (por ejemplo KC, LAC, LA...), respétalo
+    up = raw.upper()
+    if up in TEAM_NAME_TO_ABBR.values():
+        return norm_abbr(up)
+    # Si viene con nombre completo, mapea a abbr
+    abbr = TEAM_NAME_TO_ABBR.get(raw, up)
+    return norm_abbr(abbr)
 
 # =========================
 # Helpers de calendario
@@ -146,8 +202,11 @@ def main():
         print("[persist] No hay finales dentro de la ventana de 36h.")
         return
 
-    finals["home_team"] = finals["home_team"].astype(str)
-    finals["away_team"] = finals["away_team"].astype(str)
+    # Normaliza equipos de ESPN a abreviaturas antes de merge
+    finals["home_team"] = finals["home_team"].astype(str).map(normalize_team)
+    finals["away_team"] = finals["away_team"].astype(str).map(normalize_team)
+
+    # Pairs con abreviaturas (mismo criterio que odds)
     finals["pair"] = _make_pair(finals["home_team"], finals["away_team"])
     odds["pair"] = _make_pair(odds["home_team"], odds["away_team"])
 
@@ -160,7 +219,7 @@ def main():
     )
 
     # Mapear correctamente scores al "home" de odds aun si ESPN invierte el orden
-    same_home = m["home_team"].astype(str).eq(m["home_team_sb"].astype(str))
+    same_home = m["home_team"].astype(str).map(norm_abbr).eq(m["home_team_sb"].astype(str).map(norm_abbr))
     sh = np.where(same_home, m["home_score"], m["away_score"])
     sa = np.where(same_home, m["away_score"], m["home_score"])
     sh = pd.to_numeric(sh, errors="coerce")
@@ -170,9 +229,7 @@ def main():
     m["score_home"] = np.where(pd.notna(sh), sh, m["score_home"])
     m["score_away"] = np.where(pd.notna(sa), sa, m["score_away"])
 
-    # === Nuevo: calcular/actualizar home_win basado en scores ===
-    # Regla: si hay ambos scores numéricos, home_win = 1 si home>away, 0 si home<away; NA si falta algo.
-    # Si ya existía home_win, lo actualizamos donde podamos derivarlo de scores (preferimos la "verdad" del marcador).
+    # === home_win basado en scores ===
     def _compute_home_win(sr_home, sr_away):
         h = pd.to_numeric(sr_home, errors="coerce")
         a = pd.to_numeric(sr_away, errors="coerce")
@@ -180,15 +237,13 @@ def main():
         both = h.notna() & a.notna()
         out.loc[both & (h > a)] = 1
         out.loc[both & (h < a)] = 0
-        # empates casi no existen en NFL moderno; si ocurriera, dejamos NA (o podrías marcar 0)
+        # si empatan (raro), dejamos NA
         return out
 
     hw_new = _compute_home_win(m["score_home"], m["score_away"])
     if "home_win" in m.columns:
-        # Sobrescribe donde tenemos computable; conserva lo previo donde aún no hay scores
         is_set = hw_new.notna()
         m.loc[is_set, "home_win"] = hw_new[is_set]
-        # Asegura dtype nulo entero
         m["home_win"] = pd.to_numeric(m["home_win"], errors="coerce").astype("Int64")
     else:
         m["home_win"] = pd.to_numeric(hw_new, errors="coerce").astype("Int64")
