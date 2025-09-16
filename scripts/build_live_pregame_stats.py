@@ -196,25 +196,20 @@ def build_team_game_df(target_season: int) -> pd.DataFrame:
             def_rush_explosive_rate_allowed=("explosive","mean"),
         ).rename(columns={"defteam":"team"}))
 
-    # Merge a nivel team-game
     team_game = (off.merge(off_pass, on=["game_id","season","week","team"], how="left")
                     .merge(off_rush, on=["game_id","season","week","team"], how="left")
                     .merge(defn,     on=["game_id","season","week","team"], how="left")
                     .merge(def_pass, on=["game_id","season","week","team"], how="left")
                     .merge(def_rush, on=["game_id","season","week","team"], how="left"))
 
-    # Añadir game_date y home/away para construir game_id “oficial” si falta
     game_dates = pbp[["game_id","game_date","home_team","away_team"]].drop_duplicates("game_id")
     team_game = team_game.merge(game_dates, on="game_id", how="left")
 
-    # Filtro de calidad: mínimo 10 plays en ofensa y defensa
     team_game = team_game[(team_game["off_plays"]>=10) & (team_game["def_plays"]>=10)].copy()
 
-    # Estandariza team y orden
     team_game["team"] = team_game["team"].astype(str).str.upper().str.strip().map(lambda x: TEAM_FIX.get(x, x))
     team_game = team_game.sort_values(["team","season","game_date","game_id"]).reset_index(drop=True)
 
-    # Si el game_id no sigue tu patrón, lo reconstruimos: "{season}_{week:02d}_{away}_{home}"
     def _rebuild_gid(row):
         try:
             season = int(row["season"]); week = int(row["week"])
@@ -227,7 +222,6 @@ def build_team_game_df(target_season: int) -> pd.DataFrame:
         return row["game_id"]
 
     team_game["game_id"] = team_game.apply(_rebuild_gid, axis=1)
-
     return team_game
 
 # ---------------------------------
@@ -245,7 +239,6 @@ def build_pregame_one_season(df_team_season: pd.DataFrame, metric_cols: list[str
 def build_pregame_current_season(target_season: int) -> pd.DataFrame:
     team_game = build_team_game_df(target_season)
 
-    # columnas métricas (todas excepto id/keys)
     metric_cols = [c for c in team_game.columns if c not in
                    ["game_id","season","week","team","game_date","home_team","away_team"]]
 
@@ -254,10 +247,8 @@ def build_pregame_current_season(target_season: int) -> pd.DataFrame:
                .apply(lambda df: build_pregame_one_season(df, metric_cols))
                .reset_index(drop=True))
 
-    # week_label como en tu ejemplo
     pregame["week_label"] = pregame["week"].apply(lambda w: f"Week {int(w)}" if pd.notna(w) else None)
 
-    # Orden final de columnas EXACTO (coincide con tu muestra)
     ordered = [
         "game_id","season","week","team","game_date",
         "off_epa_per_play_pre_ytd","off_epa_per_play_pre_ewm","off_epa_per_play_pre_l8",
@@ -301,12 +292,17 @@ def build_pregame_current_season(target_season: int) -> pd.DataFrame:
         "week_label",
     ]
 
-    # Asegura todas las columnas (si alguna métrica no existió por falta de plays/pass/run)
     for c in ordered:
         if c not in pregame.columns:
             pregame[c] = np.nan
 
     pregame = pregame[ordered].copy()
+
+    # >>> Orden NUEVO: Week asc., luego fecha, luego team y game_id
+    pregame["game_date"] = pd.to_datetime(pregame["game_date"], errors="coerce")
+    pregame["week"] = pd.to_numeric(pregame["week"], errors="coerce")
+    pregame = pregame.sort_values(["week","game_date","team","game_id"], kind="mergesort").reset_index(drop=True)
+
     return pregame
 
 # ---------------------------------
