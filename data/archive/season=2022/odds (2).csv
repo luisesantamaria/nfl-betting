@@ -1,0 +1,285 @@
+schedule_date,season,week,week_label,home_team,score_home,score_away,away_team,team_favorite_id,spread_favorite,home_line,over_under_line,weather_temperature,weather_wind_mph,weather_humidity,stadium,stadium_neutral,point_diff,home_win
+2022-09-08,2022,1,Week 1,LA,10,31,BUF,BUF,-2.0,2.0,52.0,72.0,0.0,,SoFi Stadium,False,-21,0.0
+2022-09-11,2022,1,Week 1,ARI,21,44,KC,KC,-6.0,6.0,54.0,72.0,0.0,,State Farm Stadium,False,-23,0.0
+2022-09-11,2022,1,Week 1,ATL,26,27,NO,NO,-5.5,5.5,44.0,72.0,0.0,,Mercedes-Benz Stadium,False,-1,0.0
+2022-09-11,2022,1,Week 1,CAR,24,26,CLE,CAR,-1.0,-1.0,42.0,,,,Bank of America Stadium,False,-2,0.0
+2022-09-11,2022,1,Week 1,CHI,19,10,SF,SF,-6.5,6.5,38.0,,,,Soldier Field,False,9,1.0
+2022-09-11,2022,1,Week 1,CIN,20,23,PIT,CIN,-7.0,-7.0,44.5,,,,Paycor Stadium,False,-3,0.0
+2022-09-11,2022,1,Week 1,DAL,3,19,TB,TB,-2.5,2.5,49.5,72.0,0.0,,AT&T Stadium,False,-16,0.0
+2022-09-11,2022,1,Week 1,DET,35,38,PHI,PHI,-5.5,5.5,48.5,72.0,0.0,,Ford Field,False,-3,0.0
+2022-09-11,2022,1,Week 1,HOU,20,20,IND,IND,-7.0,7.0,45.5,72.0,0.0,,NRG Stadium,False,0,0.0
+2022-09-11,2022,1,Week 1,LAC,24,19,LV,LAC,-3.5,-3.5,52.5,72.0,0.0,,SoFi Stadium,False,5,1.0
+2022-09-11,2022,1,Week 1,MIA,20,7,NE,MIA,-3.0,-3.0,46.5,,,,Hard Rock Stadium,False,13,1.0
+2022-09-11,2022,1,Week 1,MIN,23,7,GB,MIN,-2.0,-2.0,46.5,72.0,0.0,,U.S. Bank Stadium,False,16,1.0
+2022-09-11,2022,1,Week 1,NYJ,9,24,BAL,BAL,-6.5,6.5,44.0,,,,MetLife Stadium,False,-15,0.0
+2022-09-11,2022,1,Week 1,TEN,20,21,NYG,TEN,-5.5,-5.5,44.0,,,,Nissan Stadium,False,-1,0.0
+2022-09-11,2022,1,Week 1,WAS,28,22,JAX,WAS,-3.0,-3.0,43.0,,,,FedEx Field,False,6,1.0
+2022-09-12,2022,1,Week 1,SEA,17,16,DEN,DEN,-6.0,6.0,44.0,,,,Lumen Field,False,1,1.0
+2022-09-15,2022,2,Week 2,KC,27,24,LAC,KC,-4.0,-4.0,52.5,,,,GEHA Field at Arrowhead Stadium,False,3,1.0
+2022-09-18,2022,2,Week 2,BAL,38,42,MIA,BAL,-3.5,-3.5,44.0,,,,M&T Bank Stadium,False,-4,0.0
+2022-09-18,2022,2,Week 2,CLE,30,31,NYJ,CLE,-6.5,-6.5,38.5,,,,FirstEnergy Stadium,False,-1,0.0
+2022-09-18,2022,2,Week 2,DAL,20,17,CIN,CIN,-7.0,7.0,42.0,72.0,0.0,,AT&T Stadium,False,3,1.0
+2022-09-18,2022,2,Week 2,DEN,16,9,HOU,DEN,-10.0,-10.0,45.5,,,,Empower Field at Mile High,False,7,1.0
+2022-09-18,2022,2,Week 2,DET,36,27,WAS,DET,-1.0,-1.0,48.0,72.0,0.0,,Ford Field,False,9,1.0
+2022-09-18,2022,2,Week 2,GB,27,10,CHI,GB,-10.0,-10.0,42.0,,,,Lambeau Field,False,17,1.0
+2022-09-18,2022,2,Week 2,JAX,24,0,IND,IND,-3.0,3.0,43.5,,,,TIAA Bank Field,False,24,1.0
+2022-09-18,2022,2,Week 2,LA,31,27,ATL,LA,-10.0,-10.0,46.0,72.0,0.0,,SoFi Stadium,False,4,1.0
+2022-09-18,2022,2,Week 2,LV,23,29,ARI,LV,-5.5,-5.5,52.0,72.0,0.0,,Allegiant Stadium,False,-6,0.0
+2022-09-18,2022,2,Week 2,NO,10,20,TB,TB,-2.5,2.5,43.5,72.0,0.0,,Caesars Superdome,False,-10,0.0
+2022-09-18,2022,2,Week 2,NYG,19,16,CAR,CAR,-1.0,1.0,43.5,,,,MetLife Stadium,False,3,1.0
+2022-09-18,2022,2,Week 2,PIT,14,17,NE,NE,-3.0,3.0,40.0,,,,Acrisure Stadium,False,-3,0.0
+2022-09-18,2022,2,Week 2,SF,27,7,SEA,SF,-8.5,-8.5,39.5,,,,Levi's Stadium,False,20,1.0
+2022-09-19,2022,2,Week 2,BUF,41,7,TEN,BUF,-10.0,-10.0,47.5,,,,Highmark Stadium,False,34,1.0
+2022-09-19,2022,2,Week 2,PHI,24,7,MIN,PHI,-2.5,-2.5,49.5,,,,Lincoln Financial Field,False,17,1.0
+2022-09-22,2022,3,Week 3,CLE,29,17,PIT,CLE,-4.5,-4.5,38.0,,,,FirstEnergy Stadium,False,12,1.0
+2022-09-25,2022,3,Week 3,ARI,12,20,LA,LA,-3.5,3.5,48.5,72.0,0.0,,State Farm Stadium,False,-8,0.0
+2022-09-25,2022,3,Week 3,CAR,22,14,NO,NO,-2.0,2.0,41.0,,,,Bank of America Stadium,False,8,1.0
+2022-09-25,2022,3,Week 3,CHI,23,20,HOU,CHI,-3.0,-3.0,39.0,,,,Soldier Field,False,3,1.0
+2022-09-25,2022,3,Week 3,DEN,11,10,SF,SF,-1.5,1.5,45.0,,,,Empower Field at Mile High,False,1,1.0
+2022-09-25,2022,3,Week 3,IND,20,17,KC,KC,-5.0,5.0,51.0,72.0,0.0,,Lucas Oil Stadium,False,3,1.0
+2022-09-25,2022,3,Week 3,LAC,10,38,JAX,LAC,-6.5,-6.5,46.5,72.0,0.0,,SoFi Stadium,False,-28,0.0
+2022-09-25,2022,3,Week 3,MIA,21,19,BUF,BUF,-4.0,4.0,54.5,,,,Hard Rock Stadium,False,2,1.0
+2022-09-25,2022,3,Week 3,MIN,28,24,DET,MIN,-6.5,-6.5,51.5,72.0,0.0,,U.S. Bank Stadium,False,4,1.0
+2022-09-25,2022,3,Week 3,NE,26,37,BAL,BAL,-2.5,2.5,44.5,,,,Gillette Stadium,False,-11,0.0
+2022-09-25,2022,3,Week 3,NYJ,12,27,CIN,CIN,-6.5,6.5,46.0,,,,MetLife Stadium,False,-15,0.0
+2022-09-25,2022,3,Week 3,SEA,23,27,ATL,SEA,-1.0,-1.0,43.5,,,,Lumen Field,False,-4,0.0
+2022-09-25,2022,3,Week 3,TB,12,14,GB,TB,-1.5,-1.5,42.0,,,,Raymond James Stadium,False,-2,0.0
+2022-09-25,2022,3,Week 3,TEN,24,22,LV,LV,-2.0,2.0,45.5,,,,Nissan Stadium,False,2,1.0
+2022-09-25,2022,3,Week 3,WAS,8,24,PHI,PHI,-6.0,6.0,47.5,,,,FedEx Field,False,-16,0.0
+2022-09-26,2022,3,Week 3,NYG,16,23,DAL,NYG,-1.0,-1.0,38.5,,,,MetLife Stadium,False,-7,0.0
+2022-09-29,2022,4,Week 4,CIN,27,15,MIA,CIN,-4.0,-4.0,49.0,,,,Paycor Stadium,False,12,1.0
+2022-10-02,2022,4,Week 4,ATL,23,20,CLE,CLE,-1.0,1.0,48.5,72.0,0.0,,Mercedes-Benz Stadium,False,3,1.0
+2022-10-02,2022,4,Week 4,BAL,20,23,BUF,BUF,-3.0,3.0,50.0,,,,M&T Bank Stadium,False,-3,0.0
+2022-10-02,2022,4,Week 4,CAR,16,26,ARI,CAR,-1.0,-1.0,43.5,,,,Bank of America Stadium,False,-10,0.0
+2022-10-02,2022,4,Week 4,DAL,25,10,WAS,DAL,-3.0,-3.0,41.0,72.0,0.0,,AT&T Stadium,False,15,1.0
+2022-10-02,2022,4,Week 4,DET,45,48,SEA,DET,-3.5,-3.5,48.5,72.0,0.0,,Ford Field,False,-3,0.0
+2022-10-02,2022,4,Week 4,GB,27,24,NE,GB,-9.5,-9.5,40.0,,,,Lambeau Field,False,3,1.0
+2022-10-02,2022,4,Week 4,HOU,24,34,LAC,LAC,-5.5,5.5,45.0,72.0,0.0,,NRG Stadium,False,-10,0.0
+2022-10-02,2022,4,Week 4,IND,17,24,TEN,IND,-3.5,-3.5,43.0,72.0,0.0,,Lucas Oil Stadium,False,-7,0.0
+2022-10-02,2022,4,Week 4,LV,32,23,DEN,LV,-2.5,-2.5,45.5,72.0,0.0,,Allegiant Stadium,False,9,1.0
+2022-10-02,2022,4,Week 4,NO,25,28,MIN,MIN,-4.0,4.0,42.0,,0.0,,Tottenham Hotspur Stadium,True,-3,0.0
+2022-10-02,2022,4,Week 4,NYG,20,12,CHI,NYG,-3.0,-3.0,39.5,,,,MetLife Stadium,False,8,1.0
+2022-10-02,2022,4,Week 4,PHI,29,21,JAX,PHI,-6.5,-6.5,44.0,,,,Lincoln Financial Field,False,8,1.0
+2022-10-02,2022,4,Week 4,PIT,20,24,NYJ,PIT,-3.0,-3.0,41.0,,,,Acrisure Stadium,False,-4,0.0
+2022-10-02,2022,4,Week 4,TB,31,41,KC,TB,-1.5,-1.5,47.5,,,,Raymond James Stadium,False,-10,0.0
+2022-10-03,2022,4,Week 4,SF,24,9,LA,SF,-1.5,-1.5,42.5,,,,Levi's Stadium,False,15,1.0
+2022-10-06,2022,5,Week 5,DEN,9,12,IND,DEN,-3.0,-3.0,42.0,,,,Empower Field at Mile High,False,-3,0.0
+2022-10-09,2022,5,Week 5,ARI,17,20,PHI,PHI,-5.5,5.5,49.0,72.0,0.0,,State Farm Stadium,False,-3,0.0
+2022-10-09,2022,5,Week 5,BAL,19,17,CIN,BAL,-3.0,-3.0,48.0,,,,M&T Bank Stadium,False,2,1.0
+2022-10-09,2022,5,Week 5,BUF,38,3,PIT,BUF,-14.0,-14.0,44.5,,,,Highmark Stadium,False,35,1.0
+2022-10-09,2022,5,Week 5,CAR,15,37,SF,SF,-6.0,6.0,40.0,,,,Bank of America Stadium,False,-22,0.0
+2022-10-09,2022,5,Week 5,CLE,28,30,LAC,LAC,-1.5,1.5,46.5,,,,FirstEnergy Stadium,False,-2,0.0
+2022-10-09,2022,5,Week 5,GB,22,27,NYG,GB,-9.0,-9.0,42.0,,,,Tottenham Hotspur Stadium,True,-5,0.0
+2022-10-09,2022,5,Week 5,JAX,6,13,HOU,JAX,-7.0,-7.0,43.5,,,,TIAA Bank Field,False,-7,0.0
+2022-10-09,2022,5,Week 5,LA,10,22,DAL,LA,-5.0,-5.0,41.5,72.0,0.0,,SoFi Stadium,False,-12,0.0
+2022-10-09,2022,5,Week 5,MIN,29,22,CHI,MIN,-8.5,-8.5,44.0,72.0,0.0,,U.S. Bank Stadium,False,7,1.0
+2022-10-09,2022,5,Week 5,NE,29,0,DET,NE,-3.0,-3.0,47.0,,,,Gillette Stadium,False,29,1.0
+2022-10-09,2022,5,Week 5,NO,39,32,SEA,NO,-5.5,-5.5,45.0,72.0,0.0,,Caesars Superdome,False,7,1.0
+2022-10-09,2022,5,Week 5,NYJ,40,17,MIA,MIA,-3.0,3.0,46.0,,,,MetLife Stadium,False,23,1.0
+2022-10-09,2022,5,Week 5,TB,21,15,ATL,TB,-10.5,-10.5,46.0,,,,Raymond James Stadium,False,6,1.0
+2022-10-09,2022,5,Week 5,WAS,17,21,TEN,TEN,-1.0,1.0,43.0,,,,FedEx Field,False,-4,0.0
+2022-10-10,2022,5,Week 5,KC,30,29,LV,KC,-7.0,-7.0,51.5,,,,GEHA Field at Arrowhead Stadium,False,1,1.0
+2022-10-13,2022,6,Week 6,CHI,7,12,WAS,WAS,-1.0,1.0,38.0,,,,Soldier Field,False,-5,0.0
+2022-10-16,2022,6,Week 6,ATL,28,14,SF,SF,-4.0,4.0,45.5,72.0,0.0,,Mercedes-Benz Stadium,False,14,1.0
+2022-10-16,2022,6,Week 6,CLE,15,38,NE,CLE,-2.5,-2.5,43.0,,,,FirstEnergy Stadium,False,-23,0.0
+2022-10-16,2022,6,Week 6,GB,10,27,NYJ,GB,-7.5,-7.5,45.0,,,,Lambeau Field,False,-17,0.0
+2022-10-16,2022,6,Week 6,IND,34,27,JAX,IND,-1.0,-1.0,41.0,72.0,0.0,,Lucas Oil Stadium,False,7,1.0
+2022-10-16,2022,6,Week 6,KC,20,24,BUF,BUF,-2.5,2.5,54.0,,,,GEHA Field at Arrowhead Stadium,False,-4,0.0
+2022-10-16,2022,6,Week 6,LA,24,10,CAR,LA,-10.0,-10.0,41.0,72.0,0.0,,SoFi Stadium,False,14,1.0
+2022-10-16,2022,6,Week 6,MIA,16,24,MIN,MIN,-3.0,3.0,45.0,,,,Hard Rock Stadium,False,-8,0.0
+2022-10-16,2022,6,Week 6,NO,26,30,CIN,CIN,-3.0,3.0,42.5,72.0,0.0,,Caesars Superdome,False,-4,0.0
+2022-10-16,2022,6,Week 6,NYG,24,20,BAL,BAL,-5.5,5.5,45.5,,,,MetLife Stadium,False,4,1.0
+2022-10-16,2022,6,Week 6,PHI,26,17,DAL,PHI,-6.5,-6.5,42.5,,,,Lincoln Financial Field,False,9,1.0
+2022-10-16,2022,6,Week 6,PIT,20,18,TB,TB,-10.0,10.0,46.5,,,,Acrisure Stadium,False,2,1.0
+2022-10-16,2022,6,Week 6,SEA,19,9,ARI,ARI,-2.5,2.5,50.5,,,,Lumen Field,False,10,1.0
+2022-10-17,2022,6,Week 6,LAC,19,16,DEN,LAC,-4.0,-4.0,45.5,72.0,0.0,,SoFi Stadium,False,3,1.0
+2022-10-20,2022,7,Week 7,ARI,42,34,NO,ARI,-2.5,-2.5,43.5,72.0,0.0,,State Farm Stadium,False,8,1.0
+2022-10-23,2022,7,Week 7,BAL,23,20,CLE,BAL,-6.5,-6.5,46.5,,,,M&T Bank Stadium,False,3,1.0
+2022-10-23,2022,7,Week 7,CAR,21,3,TB,TB,-13.0,13.0,39.5,,,,Bank of America Stadium,False,18,1.0
+2022-10-23,2022,7,Week 7,CIN,35,17,ATL,CIN,-6.5,-6.5,47.5,,,,Paycor Stadium,False,18,1.0
+2022-10-23,2022,7,Week 7,DAL,24,6,DET,DAL,-7.0,-7.0,49.5,72.0,0.0,,AT&T Stadium,False,18,1.0
+2022-10-23,2022,7,Week 7,DEN,9,16,NYJ,NYJ,-2.0,2.0,37.0,,,,Empower Field at Mile High,False,-7,0.0
+2022-10-23,2022,7,Week 7,JAX,17,23,NYG,JAX,-3.0,-3.0,43.5,,,,TIAA Bank Field,False,-6,0.0
+2022-10-23,2022,7,Week 7,LAC,23,37,SEA,LAC,-4.5,-4.5,51.0,72.0,0.0,,SoFi Stadium,False,-14,0.0
+2022-10-23,2022,7,Week 7,LV,38,20,HOU,LV,-7.0,-7.0,46.0,72.0,0.0,,Allegiant Stadium,False,18,1.0
+2022-10-23,2022,7,Week 7,MIA,16,10,PIT,MIA,-7.0,-7.0,44.0,,,,Hard Rock Stadium,False,6,1.0
+2022-10-23,2022,7,Week 7,SF,23,44,KC,KC,-1.0,1.0,49.0,,,,Levi's Stadium,False,-21,0.0
+2022-10-23,2022,7,Week 7,TEN,19,10,IND,TEN,-2.5,-2.5,42.5,,,,Nissan Stadium,False,9,1.0
+2022-10-23,2022,7,Week 7,WAS,23,21,GB,GB,-4.0,4.0,41.5,,,,FedEx Field,False,2,1.0
+2022-10-24,2022,7,Week 7,NE,14,33,CHI,NE,-8.5,-8.5,40.0,,,,Gillette Stadium,False,-19,0.0
+2022-10-27,2022,8,Week 8,TB,22,27,BAL,TB,-2.0,-2.0,46.0,,,,Raymond James Stadium,False,-5,0.0
+2022-10-30,2022,8,Week 8,ATL,37,34,CAR,ATL,-4.0,-4.0,41.0,72.0,0.0,,Mercedes-Benz Stadium,False,3,1.0
+2022-10-30,2022,8,Week 8,BUF,27,17,GB,BUF,-10.5,-10.5,47.0,,,,Highmark Stadium,False,10,1.0
+2022-10-30,2022,8,Week 8,DAL,49,29,CHI,DAL,-10.0,-10.0,42.5,72.0,0.0,,AT&T Stadium,False,20,1.0
+2022-10-30,2022,8,Week 8,DET,27,31,MIA,MIA,-3.5,3.5,52.0,72.0,0.0,,Ford Field,False,-4,0.0
+2022-10-30,2022,8,Week 8,HOU,10,17,TEN,TEN,-1.0,1.0,39.5,72.0,0.0,,NRG Stadium,False,-7,0.0
+2022-10-30,2022,8,Week 8,IND,16,17,WAS,IND,-3.0,-3.0,40.0,72.0,0.0,,Lucas Oil Stadium,False,-1,0.0
+2022-10-30,2022,8,Week 8,JAX,17,21,DEN,JAX,-1.0,-1.0,40.5,,,,Wembley Stadium,True,-4,0.0
+2022-10-30,2022,8,Week 8,LA,14,31,SF,LA,-1.0,-1.0,42.0,72.0,0.0,,SoFi Stadium,False,-17,0.0
+2022-10-30,2022,8,Week 8,MIN,34,26,ARI,MIN,-4.0,-4.0,48.5,72.0,0.0,,U.S. Bank Stadium,False,8,1.0
+2022-10-30,2022,8,Week 8,NO,24,0,LV,LV,-1.0,1.0,48.5,72.0,0.0,,Caesars Superdome,False,24,1.0
+2022-10-30,2022,8,Week 8,NYJ,17,22,NE,NE,-3.0,3.0,40.0,,,,MetLife Stadium,False,-5,0.0
+2022-10-30,2022,8,Week 8,PHI,35,13,PIT,PHI,-11.5,-11.5,43.0,,,,Lincoln Financial Field,False,22,1.0
+2022-10-30,2022,8,Week 8,SEA,27,13,NYG,SEA,-3.0,-3.0,44.5,,,,Lumen Field,False,14,1.0
+2022-10-31,2022,8,Week 8,CLE,32,13,CIN,CIN,-3.0,3.0,45.0,,,,FirstEnergy Stadium,False,19,1.0
+2022-11-03,2022,9,Week 9,HOU,17,29,PHI,PHI,-14.0,14.0,45.5,72.0,0.0,,NRG Stadium,False,-12,0.0
+2022-11-06,2022,9,Week 9,ARI,21,31,SEA,ARI,-2.0,-2.0,49.0,72.0,0.0,,State Farm Stadium,False,-10,0.0
+2022-11-06,2022,9,Week 9,ATL,17,20,LAC,LAC,-2.5,2.5,49.5,72.0,0.0,,Mercedes-Benz Stadium,False,-3,0.0
+2022-11-06,2022,9,Week 9,CHI,32,35,MIA,MIA,-4.0,4.0,46.0,,,,Soldier Field,False,-3,0.0
+2022-11-06,2022,9,Week 9,CIN,42,21,CAR,CIN,-7.0,-7.0,42.5,,,,Paycor Stadium,False,21,1.0
+2022-11-06,2022,9,Week 9,DET,15,9,GB,GB,-4.0,4.0,49.5,72.0,0.0,,Ford Field,False,6,1.0
+2022-11-06,2022,9,Week 9,JAX,27,20,LV,LV,-2.5,2.5,48.0,,,,TIAA Bank Field,False,7,1.0
+2022-11-06,2022,9,Week 9,KC,20,17,TEN,KC,-14.0,-14.0,45.0,,,,GEHA Field at Arrowhead Stadium,False,3,1.0
+2022-11-06,2022,9,Week 9,NE,26,3,IND,NE,-5.0,-5.0,40.0,,,,Gillette Stadium,False,23,1.0
+2022-11-06,2022,9,Week 9,NYJ,20,17,BUF,BUF,-10.5,10.5,46.0,,,,MetLife Stadium,False,3,1.0
+2022-11-06,2022,9,Week 9,TB,16,13,LA,TB,-3.0,-3.0,42.5,,,,Raymond James Stadium,False,3,1.0
+2022-11-06,2022,9,Week 9,WAS,17,20,MIN,MIN,-3.0,3.0,43.5,,,,FedEx Field,False,-3,0.0
+2022-11-07,2022,9,Week 9,NO,13,27,BAL,BAL,-1.5,1.5,46.0,72.0,0.0,,Caesars Superdome,False,-14,0.0
+2022-11-10,2022,10,Week 10,CAR,25,15,ATL,ATL,-2.5,2.5,41.5,,,,Bank of America Stadium,False,10,1.0
+2022-11-13,2022,10,Week 10,BUF,30,33,MIN,BUF,-6.0,-6.0,46.0,,,,Highmark Stadium,False,-3,0.0
+2022-11-13,2022,10,Week 10,CHI,30,31,DET,CHI,-3.0,-3.0,48.5,,,,Soldier Field,False,-1,0.0
+2022-11-13,2022,10,Week 10,GB,31,28,DAL,DAL,-3.5,3.5,44.5,,,,Lambeau Field,False,3,1.0
+2022-11-13,2022,10,Week 10,KC,27,17,JAX,KC,-9.5,-9.5,51.5,,,,GEHA Field at Arrowhead Stadium,False,10,1.0
+2022-11-13,2022,10,Week 10,LA,17,27,ARI,LA,-3.5,-3.5,38.0,72.0,0.0,,SoFi Stadium,False,-10,0.0
+2022-11-13,2022,10,Week 10,LV,20,25,IND,LV,-4.0,-4.0,41.0,72.0,0.0,,Allegiant Stadium,False,-5,0.0
+2022-11-13,2022,10,Week 10,MIA,39,17,CLE,MIA,-3.0,-3.0,49.5,,,,Hard Rock Stadium,False,22,1.0
+2022-11-13,2022,10,Week 10,NYG,24,16,HOU,NYG,-4.5,-4.5,41.0,,,,MetLife Stadium,False,8,1.0
+2022-11-13,2022,10,Week 10,PIT,20,10,NO,PIT,-1.0,-1.0,39.5,,,,Acrisure Stadium,False,10,1.0
+2022-11-13,2022,10,Week 10,SF,22,16,LAC,SF,-8.0,-8.0,45.5,,,,Levi's Stadium,False,6,1.0
+2022-11-13,2022,10,Week 10,TB,21,16,SEA,TB,-2.5,-2.5,45.0,,,,Allianz Arena,True,5,1.0
+2022-11-13,2022,10,Week 10,TEN,17,10,DEN,TEN,-2.5,-2.5,39.5,,,,Nissan Stadium,False,7,1.0
+2022-11-14,2022,10,Week 10,PHI,21,32,WAS,PHI,-11.0,-11.0,43.0,,,,Lincoln Financial Field,False,-11,0.0
+2022-11-17,2022,11,Week 11,GB,17,27,TEN,GB,-3.0,-3.0,40.5,,,,Lambeau Field,False,-10,0.0
+2022-11-20,2022,11,Week 11,ATL,27,24,CHI,ATL,-2.5,-2.5,48.5,72.0,0.0,,Mercedes-Benz Stadium,False,3,1.0
+2022-11-20,2022,11,Week 11,BAL,13,3,CAR,BAL,-12.5,-12.5,41.5,,,,M&T Bank Stadium,False,10,1.0
+2022-11-20,2022,11,Week 11,BUF,31,23,CLE,BUF,-7.5,-7.5,50.5,72.0,0.0,,Ford Field,True,8,1.0
+2022-11-20,2022,11,Week 11,DEN,16,22,LV,DEN,-2.5,-2.5,41.5,,,,Empower Field at Mile High,False,-6,0.0
+2022-11-20,2022,11,Week 11,HOU,10,23,WAS,WAS,-3.0,3.0,41.0,72.0,0.0,,NRG Stadium,False,-13,0.0
+2022-11-20,2022,11,Week 11,IND,16,17,PHI,PHI,-6.0,6.0,45.0,72.0,0.0,,Lucas Oil Stadium,False,-1,0.0
+2022-11-20,2022,11,Week 11,LAC,27,30,KC,KC,-5.5,5.5,53.0,72.0,0.0,,SoFi Stadium,False,-3,0.0
+2022-11-20,2022,11,Week 11,MIN,3,40,DAL,DAL,-2.0,2.0,48.5,72.0,0.0,,U.S. Bank Stadium,False,-37,0.0
+2022-11-20,2022,11,Week 11,NE,10,3,NYJ,NE,-3.5,-3.5,38.0,,,,Gillette Stadium,False,7,1.0
+2022-11-20,2022,11,Week 11,NO,27,20,LA,NO,-2.5,-2.5,39.5,72.0,0.0,,Caesars Superdome,False,7,1.0
+2022-11-20,2022,11,Week 11,NYG,18,31,DET,NYG,-3.0,-3.0,44.5,,,,MetLife Stadium,False,-13,0.0
+2022-11-20,2022,11,Week 11,PIT,30,37,CIN,CIN,-3.5,3.5,39.5,,,,Acrisure Stadium,False,-7,0.0
+2022-11-21,2022,11,Week 11,ARI,10,38,SF,SF,-10.0,10.0,43.0,,,,Estadio Azteca,True,-28,0.0
+2022-11-24,2022,12,Week 12,DAL,28,20,NYG,DAL,-10.0,-10.0,45.5,72.0,0.0,,AT&T Stadium,False,8,1.0
+2022-11-24,2022,12,Week 12,DET,25,28,BUF,BUF,-9.5,9.5,55.0,72.0,0.0,,Ford Field,False,-3,0.0
+2022-11-24,2022,12,Week 12,MIN,33,26,NE,MIN,-2.5,-2.5,41.5,72.0,0.0,,U.S. Bank Stadium,False,7,1.0
+2022-11-27,2022,12,Week 12,ARI,24,25,LAC,LAC,-2.5,2.5,48.5,72.0,0.0,,State Farm Stadium,False,-1,0.0
+2022-11-27,2022,12,Week 12,CAR,23,10,DEN,DEN,-1.0,1.0,36.0,,,,Bank of America Stadium,False,13,1.0
+2022-11-27,2022,12,Week 12,CLE,23,17,TB,TB,-3.0,3.0,42.0,,,,FirstEnergy Stadium,False,6,1.0
+2022-11-27,2022,12,Week 12,JAX,28,27,BAL,BAL,-3.5,3.5,43.0,,,,TIAA Bank Field,False,1,1.0
+2022-11-27,2022,12,Week 12,KC,26,10,LA,KC,-15.5,-15.5,42.0,,,,GEHA Field at Arrowhead Stadium,False,16,1.0
+2022-11-27,2022,12,Week 12,MIA,30,15,HOU,MIA,-14.0,-14.0,47.5,,,,Hard Rock Stadium,False,15,1.0
+2022-11-27,2022,12,Week 12,NYJ,31,10,CHI,NYJ,-7.5,-7.5,37.5,,,,MetLife Stadium,False,21,1.0
+2022-11-27,2022,12,Week 12,PHI,40,33,GB,PHI,-6.5,-6.5,46.5,,,,Lincoln Financial Field,False,7,1.0
+2022-11-27,2022,12,Week 12,SEA,34,40,LV,SEA,-4.0,-4.0,47.5,,,,Lumen Field,False,-6,0.0
+2022-11-27,2022,12,Week 12,SF,13,0,NO,SF,-8.5,-8.5,43.5,,,,Levi's Stadium,False,13,1.0
+2022-11-27,2022,12,Week 12,TEN,16,20,CIN,CIN,-1.0,1.0,42.0,,,,Nissan Stadium,False,-4,0.0
+2022-11-27,2022,12,Week 12,WAS,19,13,ATL,WAS,-3.5,-3.5,40.0,,,,FedEx Field,False,6,1.0
+2022-11-28,2022,12,Week 12,IND,17,24,PIT,IND,-2.5,-2.5,39.5,72.0,0.0,,Lucas Oil Stadium,False,-7,0.0
+2022-12-01,2022,13,Week 13,NE,10,24,BUF,BUF,-4.0,4.0,44.0,,,,Gillette Stadium,False,-14,0.0
+2022-12-04,2022,13,Week 13,ATL,16,19,PIT,PIT,-1.5,1.5,43.0,72.0,0.0,,Mercedes-Benz Stadium,False,-3,0.0
+2022-12-04,2022,13,Week 13,BAL,10,9,DEN,BAL,-9.0,-9.0,40.0,,,,M&T Bank Stadium,False,1,1.0
+2022-12-04,2022,13,Week 13,CHI,19,28,GB,GB,-3.5,3.5,45.0,,,,Soldier Field,False,-9,0.0
+2022-12-04,2022,13,Week 13,CIN,27,24,KC,KC,-2.5,2.5,53.5,,,,Paycor Stadium,False,3,1.0
+2022-12-04,2022,13,Week 13,DAL,54,19,IND,DAL,-11.0,-11.0,44.5,72.0,0.0,,AT&T Stadium,False,35,1.0
+2022-12-04,2022,13,Week 13,DET,40,14,JAX,DET,-1.0,-1.0,51.0,72.0,0.0,,Ford Field,False,26,1.0
+2022-12-04,2022,13,Week 13,HOU,14,27,CLE,CLE,-7.5,7.5,46.5,72.0,0.0,,NRG Stadium,False,-13,0.0
+2022-12-04,2022,13,Week 13,LA,23,27,SEA,SEA,-6.5,6.5,41.0,72.0,0.0,,SoFi Stadium,False,-4,0.0
+2022-12-04,2022,13,Week 13,LV,27,20,LAC,LV,-2.5,-2.5,49.5,72.0,0.0,,Allegiant Stadium,False,7,1.0
+2022-12-04,2022,13,Week 13,MIN,27,22,NYJ,MIN,-3.0,-3.0,44.0,72.0,0.0,,U.S. Bank Stadium,False,5,1.0
+2022-12-04,2022,13,Week 13,NYG,20,20,WAS,WAS,-2.5,2.5,40.5,,,,MetLife Stadium,False,0,0.0
+2022-12-04,2022,13,Week 13,PHI,35,10,TEN,PHI,-4.5,-4.5,44.5,,,,Lincoln Financial Field,False,25,1.0
+2022-12-04,2022,13,Week 13,SF,33,17,MIA,SF,-5.0,-5.0,45.5,,,,Levi's Stadium,False,16,1.0
+2022-12-05,2022,13,Week 13,TB,17,16,NO,TB,-3.0,-3.0,40.5,,,,Raymond James Stadium,False,1,1.0
+2022-12-08,2022,14,Week 14,LA,17,16,LV,LV,-6.5,6.5,41.5,72.0,0.0,,SoFi Stadium,False,1,1.0
+2022-12-11,2022,14,Week 14,BUF,20,12,NYJ,BUF,-10.0,-10.0,43.5,,,,Highmark Stadium,False,8,1.0
+2022-12-11,2022,14,Week 14,CIN,23,10,CLE,CIN,-4.0,-4.0,47.0,,,,Paycor Stadium,False,13,1.0
+2022-12-11,2022,14,Week 14,DAL,27,23,HOU,DAL,-17.0,-17.0,44.5,72.0,0.0,,AT&T Stadium,False,4,1.0
+2022-12-11,2022,14,Week 14,DEN,28,34,KC,KC,-9.0,9.0,44.0,,,,Empower Field at Mile High,False,-6,0.0
+2022-12-11,2022,14,Week 14,DET,34,23,MIN,DET,-2.0,-2.0,51.5,72.0,0.0,,Ford Field,False,11,1.0
+2022-12-11,2022,14,Week 14,LAC,23,17,MIA,MIA,-3.0,3.0,55.0,72.0,0.0,,SoFi Stadium,False,6,1.0
+2022-12-11,2022,14,Week 14,NYG,22,48,PHI,PHI,-7.0,7.0,44.5,,,,MetLife Stadium,False,-26,0.0
+2022-12-11,2022,14,Week 14,PIT,14,16,BAL,PIT,-2.0,-2.0,37.0,,,,Acrisure Stadium,False,-2,0.0
+2022-12-11,2022,14,Week 14,SEA,24,30,CAR,SEA,-4.0,-4.0,44.0,,,,Lumen Field,False,-6,0.0
+2022-12-11,2022,14,Week 14,SF,35,7,TB,SF,-3.5,-3.5,38.5,,,,Levi's Stadium,False,28,1.0
+2022-12-11,2022,14,Week 14,TEN,22,36,JAX,TEN,-3.0,-3.0,41.5,,,,Nissan Stadium,False,-14,0.0
+2022-12-12,2022,14,Week 14,ARI,13,27,NE,NE,-2.5,2.5,44.0,72.0,0.0,,State Farm Stadium,False,-14,0.0
+2022-12-15,2022,15,Week 15,SEA,13,21,SF,SF,-3.0,3.0,42.5,,,,Lumen Field,False,-8,0.0
+2022-12-17,2022,15,Week 15,BUF,32,29,MIA,BUF,-7.0,-7.0,43.5,,,,Highmark Stadium,False,3,1.0
+2022-12-17,2022,15,Week 15,CLE,13,3,BAL,CLE,-3.0,-3.0,39.0,,,,FirstEnergy Stadium,False,10,1.0
+2022-12-17,2022,15,Week 15,MIN,39,36,IND,MIN,-3.5,-3.5,47.0,72.0,0.0,,U.S. Bank Stadium,False,3,1.0
+2022-12-18,2022,15,Week 15,CAR,16,24,PIT,CAR,-2.5,-2.5,37.0,,,,Bank of America Stadium,False,-8,0.0
+2022-12-18,2022,15,Week 15,CHI,20,25,PHI,PHI,-8.5,8.5,48.0,,,,Soldier Field,False,-5,0.0
+2022-12-18,2022,15,Week 15,DEN,24,15,ARI,DEN,-1.5,-1.5,37.0,,,,Empower Field at Mile High,False,9,1.0
+2022-12-18,2022,15,Week 15,HOU,24,30,KC,KC,-14.5,14.5,48.5,72.0,0.0,,NRG Stadium,False,-6,0.0
+2022-12-18,2022,15,Week 15,JAX,40,34,DAL,DAL,-4.0,4.0,48.0,,,,TIAA Bank Field,False,6,1.0
+2022-12-18,2022,15,Week 15,LAC,17,14,TEN,LAC,-3.0,-3.0,46.5,72.0,0.0,,SoFi Stadium,False,3,1.0
+2022-12-18,2022,15,Week 15,LV,30,24,NE,LV,-2.5,-2.5,45.5,72.0,0.0,,Allegiant Stadium,False,6,1.0
+2022-12-18,2022,15,Week 15,NO,21,18,ATL,NO,-5.0,-5.0,43.5,72.0,0.0,,Caesars Superdome,False,3,1.0
+2022-12-18,2022,15,Week 15,NYJ,17,20,DET,NYJ,-2.0,-2.0,44.0,,,,MetLife Stadium,False,-3,0.0
+2022-12-18,2022,15,Week 15,TB,23,34,CIN,CIN,-3.5,3.5,47.5,,,,Raymond James Stadium,False,-11,0.0
+2022-12-18,2022,15,Week 15,WAS,12,20,NYG,WAS,-4.0,-4.0,40.5,,,,FedEx Field,False,-8,0.0
+2022-12-19,2022,15,Week 15,GB,24,12,LA,GB,-7.5,-7.5,39.5,,,,Lambeau Field,False,12,1.0
+2022-12-22,2022,16,Week 16,NYJ,3,19,JAX,NYJ,-2.5,-2.5,36.5,,,,MetLife Stadium,False,-16,0.0
+2022-12-24,2022,16,Week 16,BAL,17,9,ATL,BAL,-6.5,-6.5,35.0,,,,M&T Bank Stadium,False,8,1.0
+2022-12-24,2022,16,Week 16,CAR,37,23,DET,DET,-2.5,2.5,43.5,,,,Bank of America Stadium,False,14,1.0
+2022-12-24,2022,16,Week 16,CHI,13,35,BUF,BUF,-8.0,8.0,40.5,,,,Soldier Field,False,-22,0.0
+2022-12-24,2022,16,Week 16,CLE,10,17,NO,CLE,-3.0,-3.0,32.0,,,,FirstEnergy Stadium,False,-7,0.0
+2022-12-24,2022,16,Week 16,DAL,40,34,PHI,DAL,-4.0,-4.0,48.0,72.0,0.0,,AT&T Stadium,False,6,1.0
+2022-12-24,2022,16,Week 16,KC,24,10,SEA,KC,-10.0,-10.0,50.5,,,,GEHA Field at Arrowhead Stadium,False,14,1.0
+2022-12-24,2022,16,Week 16,MIN,27,24,NYG,MIN,-4.5,-4.5,48.0,72.0,0.0,,U.S. Bank Stadium,False,3,1.0
+2022-12-24,2022,16,Week 16,NE,18,22,CIN,CIN,-3.0,3.0,41.5,,,,Gillette Stadium,False,-4,0.0
+2022-12-24,2022,16,Week 16,PIT,13,10,LV,PIT,-2.0,-2.0,38.0,,,,Acrisure Stadium,False,3,1.0
+2022-12-24,2022,16,Week 16,SF,37,20,WAS,SF,-6.5,-6.5,37.0,,,,Levi's Stadium,False,17,1.0
+2022-12-24,2022,16,Week 16,TEN,14,19,HOU,TEN,-3.0,-3.0,34.0,,,,Nissan Stadium,False,-5,0.0
+2022-12-25,2022,16,Week 16,ARI,16,19,TB,TB,-7.5,7.5,41.5,72.0,0.0,,State Farm Stadium,False,-3,0.0
+2022-12-25,2022,16,Week 16,LA,51,14,DEN,DEN,-3.0,3.0,36.0,72.0,0.0,,SoFi Stadium,False,37,1.0
+2022-12-25,2022,16,Week 16,MIA,20,26,GB,MIA,-3.5,-3.5,49.5,,,,Hard Rock Stadium,False,-6,0.0
+2022-12-26,2022,16,Week 16,IND,3,20,LAC,LAC,-3.5,3.5,44.5,72.0,0.0,,Lucas Oil Stadium,False,-17,0.0
+2022-12-29,2022,17,Week 17,TEN,13,27,DAL,DAL,-14.0,14.0,40.5,,,,Nissan Stadium,False,-14,0.0
+2023-01-01,2022,17,Week 17,ATL,20,19,ARI,ATL,-6.5,-6.5,40.5,72.0,0.0,,Mercedes-Benz Stadium,False,1,1.0
+2023-01-01,2022,17,Week 17,BAL,13,16,PIT,BAL,-1.0,-1.0,35.5,,,,M&T Bank Stadium,False,-3,0.0
+2023-01-01,2022,17,Week 17,DET,41,10,CHI,DET,-4.5,-4.5,52.5,72.0,0.0,,Ford Field,False,31,1.0
+2023-01-01,2022,17,Week 17,GB,41,17,MIN,GB,-3.5,-3.5,47.5,,,,Lambeau Field,False,24,1.0
+2023-01-01,2022,17,Week 17,HOU,3,31,JAX,JAX,-3.5,3.5,43.0,72.0,0.0,,NRG Stadium,False,-28,0.0
+2023-01-01,2022,17,Week 17,KC,27,24,DEN,KC,-12.5,-12.5,45.5,,,,GEHA Field at Arrowhead Stadium,False,3,1.0
+2023-01-01,2022,17,Week 17,LAC,31,10,LA,LAC,-6.5,-6.5,41.0,72.0,0.0,,SoFi Stadium,False,21,1.0
+2023-01-01,2022,17,Week 17,LV,34,37,SF,SF,-10.0,10.0,41.0,72.0,0.0,,Allegiant Stadium,False,-3,0.0
+2023-01-01,2022,17,Week 17,NE,23,21,MIA,NE,-3.0,-3.0,41.5,,,,Gillette Stadium,False,2,1.0
+2023-01-01,2022,17,Week 17,NYG,38,10,IND,NYG,-5.5,-5.5,38.5,,,,MetLife Stadium,False,28,1.0
+2023-01-01,2022,17,Week 17,PHI,10,20,NO,PHI,-5.0,-5.0,42.0,,,,Lincoln Financial Field,False,-10,0.0
+2023-01-01,2022,17,Week 17,SEA,23,6,NYJ,NYJ,-1.5,1.5,43.0,,,,Lumen Field,False,17,1.0
+2023-01-01,2022,17,Week 17,TB,30,24,CAR,TB,-3.5,-3.5,40.5,,,,Raymond James Stadium,False,6,1.0
+2023-01-01,2022,17,Week 17,WAS,10,24,CLE,WAS,-2.0,-2.0,41.5,,,,FedEx Field,False,-14,0.0
+2023-01-07,2022,18,Week 18,JAX,20,16,TEN,JAX,-6.5,-6.5,39.5,,,,TIAA Bank Field,False,4,1.0
+2023-01-07,2022,18,Week 18,LV,13,31,KC,KC,-8.5,8.5,52.0,72.0,0.0,,Allegiant Stadium,False,-18,0.0
+2023-01-08,2022,18,Week 18,ATL,30,17,TB,ATL,-6.0,-6.0,40.5,72.0,0.0,,Mercedes-Benz Stadium,False,13,1.0
+2023-01-08,2022,18,Week 18,BUF,35,23,NE,BUF,-8.0,-8.0,44.0,,,,Highmark Stadium,False,12,1.0
+2023-01-08,2022,18,Week 18,CHI,13,29,MIN,MIN,-6.5,6.5,42.5,,,,Soldier Field,False,-16,0.0
+2023-01-08,2022,18,Week 18,CIN,27,16,BAL,CIN,-11.0,-11.0,39.0,,,,Paycor Stadium,False,11,1.0
+2023-01-08,2022,18,Week 18,DEN,31,28,LAC,DEN,-6.5,-6.5,39.0,,,,Empower Field at Mile High,False,3,1.0
+2023-01-08,2022,18,Week 18,GB,16,20,DET,GB,-4.0,-4.0,48.0,,,,Lambeau Field,False,-4,0.0
+2023-01-08,2022,18,Week 18,IND,31,32,HOU,IND,-3.0,-3.0,37.5,72.0,0.0,,Lucas Oil Stadium,False,-1,0.0
+2023-01-08,2022,18,Week 18,MIA,11,6,NYJ,MIA,-3.5,-3.5,37.5,,,,Hard Rock Stadium,False,5,1.0
+2023-01-08,2022,18,Week 18,NO,7,10,CAR,NO,-3.5,-3.5,41.5,72.0,0.0,,Caesars Superdome,False,-3,0.0
+2023-01-08,2022,18,Week 18,PHI,22,16,NYG,PHI,-17.0,-17.0,43.0,,,,Lincoln Financial Field,False,6,1.0
+2023-01-08,2022,18,Week 18,PIT,28,14,CLE,PIT,-2.5,-2.5,40.0,,,,Acrisure Stadium,False,14,1.0
+2023-01-08,2022,18,Week 18,SEA,19,16,LA,SEA,-4.5,-4.5,43.0,,,,Lumen Field,False,3,1.0
+2023-01-08,2022,18,Week 18,SF,38,13,ARI,SF,-14.5,-14.5,40.0,,,,Levi's Stadium,False,25,1.0
+2023-01-08,2022,18,Week 18,WAS,26,6,DAL,DAL,-7.5,7.5,41.0,,,,FedEx Field,False,20,1.0
+2023-01-14,2022,19,Wild Card,JAX,31,30,LAC,LAC,-2.5,2.5,46.5,,,,TIAA Bank Field,False,1,1.0
+2023-01-14,2022,19,Wild Card,SF,41,23,SEA,SF,-9.5,-9.5,42.0,57.0,11.0,82.0,Levi's Stadium,False,18,1.0
+2023-01-15,2022,19,Wild Card,BUF,34,31,MIA,BUF,-14.0,-14.0,44.5,27.0,4.0,80.0,Highmark Stadium,False,3,1.0
+2023-01-15,2022,19,Wild Card,CIN,24,17,BAL,CIN,-8.0,-8.0,40.0,30.0,4.0,71.0,Paycor Stadium,False,7,1.0
+2023-01-15,2022,19,Wild Card,MIN,24,31,NYG,MIN,-2.5,-2.5,48.0,72.0,0.0,,U.S. Bank Stadium,False,-7,0.0
+2023-01-16,2022,19,Wild Card,TB,14,31,DAL,DAL,-2.5,2.5,45.5,58.0,2.0,42.0,Raymond James Stadium,False,-17,0.0
+2023-01-21,2022,20,Divisional,KC,27,20,JAX,KC,-9.5,-9.5,52.0,36.0,6.0,92.0,GEHA Field at Arrowhead Stadium,False,7,1.0
+2023-01-21,2022,20,Divisional,PHI,38,7,NYG,PHI,-8.0,-8.0,48.0,40.0,6.0,55.0,Lincoln Financial Field,False,31,1.0
+2023-01-22,2022,20,Divisional,BUF,10,27,CIN,BUF,-6.0,-6.0,48.5,32.0,4.0,100.0,Highmark Stadium,False,-17,0.0
+2023-01-22,2022,20,Divisional,SF,19,12,DAL,SF,-3.5,-3.5,46.5,55.0,19.0,47.0,Levi's Stadium,False,7,1.0
+2023-01-29,2022,21,Conference,KC,23,20,CIN,KC,-1.5,-1.5,48.0,22.0,13.0,55.0,GEHA Field at Arrowhead Stadium,False,3,1.0
+2023-01-29,2022,21,Conference,PHI,31,7,SF,PHI,-2.5,-2.5,45.5,52.0,14.0,48.0,Lincoln Financial Field,False,24,1.0
+2023-02-12,2022,22,Super Bowl,PHI,35,38,KC,PHI,-1.0,-1.0,51.0,76.0,8.0,8.0,State Farm Stadium,True,-3,0.0
