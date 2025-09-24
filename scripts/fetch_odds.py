@@ -52,7 +52,6 @@ def normalize_team(name: str) -> str:
     if not isinstance(name, str):
         return name
     name = name.strip()
-    # si ya viene abreviado, respétalo
     if name.upper() in TEAM_NAME_TO_ABBR.values():
         return name.upper()
     return TEAM_NAME_TO_ABBR.get(name, name.upper())
@@ -80,10 +79,17 @@ def best_decimal(prices):
     clean = [c for c in clean if not (isinstance(c, float) and math.isnan(c))]
     return max(clean) if clean else np.nan
 
+def fmt_tsZ(ts: pd.Timestamp) -> str:
+    """Devuelve 'YYYY-MM-DDTHH:MM:SSZ' en UTC."""
+    if ts.tz is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+
 def fetch_events(api_key: str, sport: str, regions: str, markets: str,
                  commence_from: str | None = None,
                  commence_to: str | None = None) -> list:
-    """Llama al endpoint con ventana opcional y más logging."""
     params = {
         "apiKey": api_key,
         "regions": regions,
@@ -237,7 +243,6 @@ def current_season_week(now_utc: datetime | None = None):
     return season, w, lbl
 
 def week_window_utc(year:int, week:int) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """Ventana [start, end) de la semana NFL: jueves 00:00 UTC a jueves siguiente."""
     anchor = first_thursday_after_labor_day_ts(year)  # tz=UTC
     start = anchor + pd.Timedelta(days=7*(week-1))
     end   = start + pd.Timedelta(days=7)
@@ -263,7 +268,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--live-file", type=str, default="data/live/odds.csv")
     ap.add_argument("--sport", type=str, default="americanfootball_nfl")
-    ap.add_argument("--regions", type=str, default="us,us2")  # <-- incluye us2 para mayor cobertura
+    ap.add_argument("--regions", type=str, default="us,us2")
     ap.add_argument("--markets", type=str, default="h2h,spreads,totals")
     ap.add_argument("--only-current-week", dest="only_current_week", action="store_true", default=True)
     ap.add_argument("--season", type=int, default=None, help="Override season (e.g., 2025)")
@@ -294,15 +299,16 @@ def main():
     target_week   = args.week   if args.week   is not None else cur_week
     print(f"[odds] target → season={target_season} week={target_week}")
 
-    # Ventana semanal para la API (más estable que pedir "todo")
-    events = []
+    # Ventana semanal para la API con formato '...Z'
     if pd.notna(target_week):
         w_start, w_end = week_window_utc(int(target_season), int(target_week))
-        print(f"[odds] window UTC → start={w_start.isoformat()} end={w_end.isoformat()}")
+        startZ = fmt_tsZ(w_start)
+        endZ   = fmt_tsZ(w_end)
+        print(f"[odds] window UTC → start={startZ} end={endZ}")
         events = fetch_events(
             api_key, args.sport, args.regions, args.markets,
-            commence_from=w_start.isoformat(),
-            commence_to=w_end.isoformat()
+            commence_from=startZ,
+            commence_to=endZ
         )
     else:
         events = fetch_events(api_key, args.sport, args.regions, args.markets)
@@ -334,7 +340,7 @@ def main():
             if c not in parsed.columns:
                 parsed[c] = np.nan
 
-    # Carga lo previo (para preservar columnas extra, p. ej. score_home/score_away)
+    # Carga lo previo
     if os.path.exists(live_path):
         try:
             prev = pd.read_csv(live_path, low_memory=False)
@@ -344,21 +350,19 @@ def main():
     else:
         prev = pd.DataFrame(columns=base_cols)
 
-    # Filtra SOLO la semana objetivo (si se pide). Esto se ejecuta después de pedir ventana cerrada,
-    # así no vaciamos por mismatch.
+    # Filtra SOLO la semana objetivo (ya pedimos ventana cerrada)
     if args.only_current_week and pd.notna(target_week):
         before = len(parsed)
         parsed = parsed[(parsed["season"] == target_season) & (parsed["week"] == target_week)]
         print(f"[odds] parsed week-filter {target_season}/{target_week}: {before} → {len(parsed)} rows")
 
-    # Concat sin perder columnas previas (sumar sin sustituir)
+    # Sumar sin sustituir + dedupe
     if parsed.empty:
         combined = prev.copy()
         print("[odds] no new rows; leaving file as-is.")
     else:
         combined = pd.concat([prev, parsed], ignore_index=True, sort=False)
 
-    # Completar week/labels si faltaran
     if "schedule_date" in combined.columns:
         combined["schedule_date"] = pd.to_datetime(combined["schedule_date"], errors="coerce", utc=True)
         mask = combined.get("week").isna() & combined["schedule_date"].notna() if "week" in combined.columns else False
@@ -367,7 +371,6 @@ def main():
             combined.loc[mask, "week"] = [w for (w, lbl) in w2]
             combined.loc[mask, "week_label"] = [lbl for (w, lbl) in w2]
 
-    # De-dup por event_id si existe, si no, por claves lógicas
     if "event_id" in combined.columns and combined["event_id"].notna().any():
         combined = combined.drop_duplicates(subset=["event_id"], keep="last")
     else:
@@ -376,7 +379,6 @@ def main():
                 combined[k] = np.nan
         combined = combined.drop_duplicates(subset=["season","week","home_team","away_team"], keep="last")
 
-    # Orden
     order_keys = [k for k in ["season","week","schedule_date","home_team"] if k in combined.columns]
     if order_keys:
         combined = combined.sort_values(order_keys, kind="mergesort")
