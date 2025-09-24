@@ -8,7 +8,8 @@ concurrency:
 
 on:
   schedule:
-    - cron: "0 5 * * 2"   # Martes 00:00 ET (05:00 UTC)
+    # Miércoles 06:00 UTC == Miércoles 00:00 America/Mexico_City
+    - cron: "0 6 * * 3"
   workflow_dispatch:
     inputs:
       season:
@@ -17,6 +18,10 @@ on:
       week:
         description: "Override week (optional)"
         required: false
+      week_shift:
+        description: "Shift target week by N (e.g., 1 = next week)"
+        required: false
+        default: "1"   # por defecto también próxima semana en manual
       archive_force:
         description: "Force archive now"
         required: false
@@ -56,34 +61,42 @@ jobs:
             exit 1
           fi
 
-      # (Opcional) Smoke test rápido de la API en ventana semanal actual (sin heredoc)
+      # (Opcional) Smoke test: ventana de la PRÓXIMA semana (thu→thu)
       - name: Smoke test Odds endpoint (optional)
         continue-on-error: true
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
           set -eux
-          START=$(python -c 'from datetime import datetime, timezone, timedelta; now=datetime.now(timezone.utc); thu=now - timedelta(days=(now.weekday()-3)%7); print(thu.replace(hour=0,minute=0,second=0,microsecond=0).isoformat())')
-          END=$(python -c 'from datetime import datetime, timezone, timedelta; now=datetime.now(timezone.utc); thu=now - timedelta(days=(now.weekday()-3)%7); print((thu.replace(hour=0,minute=0,second=0,microsecond=0)+timedelta(days=7)).isoformat())')
+          START=$(python -c 'from datetime import datetime, timezone, timedelta; now=datetime.now(timezone.utc); thu=now - timedelta(days=(now.weekday()-3)%7); s=(thu.replace(hour=0,minute=0,second=0,microsecond=0)+timedelta(days=7)); print(s.strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          END=$(python -c 'from datetime import datetime, timezone, timedelta; now=datetime.now(timezone.utc); thu=now - timedelta(days=(now.weekday()-3)%7); e=(thu.replace(hour=0,minute=0,second=0,microsecond=0)+timedelta(days=14)); print(e.strftime("%Y-%m-%dT%H:%M:%SZ"))')
           curl -sS "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds?regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&dateFormat=iso&commenceTimeFrom=${START}&commenceTimeTo=${END}&apiKey=${ODDS_API_KEY}" | head -c 1000
 
-      - name: Fetch odds (current week) – The Odds API
+      - name: Fetch odds (next week) – The Odds API
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           PF_INPUT: ${{ github.event.inputs.price_factor }}
           SEASON: ${{ github.event.inputs.season }}
           WEEK: ${{ github.event.inputs.week }}
+          WEEK_SHIFT_INPUT: ${{ github.event.inputs.week_shift }}
           ARCHIVE_FORCE: ${{ github.event.inputs.archive_force }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euxo pipefail
           echo "SEASON override: ${SEASON:-<none>}"
           echo "WEEK   override: ${WEEK:-<none>}"
           echo "ARCHIVE_FORCE: ${ARCHIVE_FORCE:-false}"
           if [ -z "${PF_INPUT:-}" ]; then PF_INPUT="1.022"; fi
+          # Por default, en ejecuciones programadas siempre pedimos la próxima semana (shift=1).
+          WEEK_SHIFT="1"
+          # Si el usuario pasó week_shift manual, respétalo.
+          if [ -n "${WEEK_SHIFT_INPUT:-}" ]; then WEEK_SHIFT="${WEEK_SHIFT_INPUT}"; fi
+          echo "WEEK_SHIFT: ${WEEK_SHIFT}"
           python scripts/fetch_odds.py \
             --markets "h2h,spreads,totals" \
             --only-current-week \
             --price-factor "$PF_INPUT" \
+            --week-shift "$WEEK_SHIFT" \
             ${SEASON:+--season "$SEASON"} \
             ${WEEK:+--week "$WEEK"} \
             $( [ "${ARCHIVE_FORCE:-false}" = "true" ] && echo "--archive-force" )
