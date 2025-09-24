@@ -80,7 +80,10 @@ def best_decimal(prices):
     clean = [c for c in clean if not (isinstance(c, float) and math.isnan(c))]
     return max(clean) if clean else np.nan
 
-def fetch_events(api_key: str, sport: str, regions: str, markets: str) -> list:
+def fetch_events(api_key: str, sport: str, regions: str, markets: str,
+                 commence_from: str | None = None,
+                 commence_to: str | None = None) -> list:
+    """Llama al endpoint con ventana opcional y más logging."""
     params = {
         "apiKey": api_key,
         "regions": regions,
@@ -88,19 +91,29 @@ def fetch_events(api_key: str, sport: str, regions: str, markets: str) -> list:
         "oddsFormat": "american",
         "dateFormat": "iso",
     }
+    if commence_from:
+        params["commenceTimeFrom"] = commence_from
+    if commence_to:
+        params["commenceTimeTo"] = commence_to
+
     url = ODDS_API_URL.format(sport=sport)
+    print(f"[odds] GET {url} params={params}")
     r = requests.get(url, params=params, timeout=30)
-    print(f"[odds] status={r.status_code} x-requests-remaining={r.headers.get('x-requests-remaining')}")
+    print(f"[odds] status={r.status_code} x-requests-remaining={r.headers.get('x-requests-remaining')} x-requests-used={r.headers.get('x-requests-used')}")
+    if r.status_code != 200:
+        print("[odds] body(trunc):", r.text[:400])
     r.raise_for_status()
     try:
         data = r.json()
     except json.JSONDecodeError:
-        print("[odds] JSON decode error; body (trunc):", str(r.text)[:200])
+        print("[odds] JSON decode error; body (trunc):", str(r.text)[:400])
         data = []
     if not isinstance(data, list):
-        print("[odds] unexpected body type; body (trunc):", str(data)[:200])
+        print("[odds] unexpected body type; body (trunc):", str(data)[:400])
         return []
     print(f"[odds] events returned: {len(data)}")
+    if not data:
+        print("[odds] EMPTY payload. Response headers:", dict(r.headers))
     return data
 
 def parse_rows(events: list, want_markets: set) -> pd.DataFrame:
@@ -223,6 +236,13 @@ def current_season_week(now_utc: datetime | None = None):
     w, lbl = infer_week_fields(ts)
     return season, w, lbl
 
+def week_window_utc(year:int, week:int) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Ventana [start, end) de la semana NFL: jueves 00:00 UTC a jueves siguiente."""
+    anchor = first_thursday_after_labor_day_ts(year)  # tz=UTC
+    start = anchor + pd.Timedelta(days=7*(week-1))
+    end   = start + pd.Timedelta(days=7)
+    return start, end
+
 def apply_price_factor(parsed: pd.DataFrame, factor: float) -> pd.DataFrame:
     out = parsed.copy()
     for side in ("home", "away"):
@@ -243,7 +263,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--live-file", type=str, default="data/live/odds.csv")
     ap.add_argument("--sport", type=str, default="americanfootball_nfl")
-    ap.add_argument("--regions", type=str, default="us")
+    ap.add_argument("--regions", type=str, default="us,us2")  # <-- incluye us2 para mayor cobertura
     ap.add_argument("--markets", type=str, default="h2h,spreads,totals")
     ap.add_argument("--only-current-week", dest="only_current_week", action="store_true", default=True)
     ap.add_argument("--season", type=int, default=None, help="Override season (e.g., 2025)")
@@ -268,7 +288,25 @@ def main():
         sys.exit(1)
 
     want_markets = set([m.strip() for m in args.markets.split(",") if m.strip()])
-    events = fetch_events(api_key, args.sport, args.regions, args.markets)
+
+    # Overrides efectivos
+    target_season = args.season if args.season is not None else cur_season
+    target_week   = args.week   if args.week   is not None else cur_week
+    print(f"[odds] target → season={target_season} week={target_week}")
+
+    # Ventana semanal para la API (más estable que pedir "todo")
+    events = []
+    if pd.notna(target_week):
+        w_start, w_end = week_window_utc(int(target_season), int(target_week))
+        print(f"[odds] window UTC → start={w_start.isoformat()} end={w_end.isoformat()}")
+        events = fetch_events(
+            api_key, args.sport, args.regions, args.markets,
+            commence_from=w_start.isoformat(),
+            commence_to=w_end.isoformat()
+        )
+    else:
+        events = fetch_events(api_key, args.sport, args.regions, args.markets)
+
     df_new = parse_rows(events, want_markets)
 
     base_cols = [
@@ -300,23 +338,20 @@ def main():
     if os.path.exists(live_path):
         try:
             prev = pd.read_csv(live_path, low_memory=False)
-        except Exception:
+        except Exception as e:
+            print(f"[odds] warn: couldn't read previous live file: {e}")
             prev = pd.DataFrame(columns=base_cols)
     else:
         prev = pd.DataFrame(columns=base_cols)
 
-    # Overrides efectivos
-    target_season = args.season if args.season is not None else cur_season
-    target_week   = args.week   if args.week   is not None else cur_week
-    print(f"[odds] target → season={target_season} week={target_week}")
-
-    # Filtra SOLO la semana objetivo (si se pide)
+    # Filtra SOLO la semana objetivo (si se pide). Esto se ejecuta después de pedir ventana cerrada,
+    # así no vaciamos por mismatch.
     if args.only_current_week and pd.notna(target_week):
         before = len(parsed)
         parsed = parsed[(parsed["season"] == target_season) & (parsed["week"] == target_week)]
         print(f"[odds] parsed week-filter {target_season}/{target_week}: {before} → {len(parsed)} rows")
 
-    # Concat sin perder columnas previas
+    # Concat sin perder columnas previas (sumar sin sustituir)
     if parsed.empty:
         combined = prev.copy()
         print("[odds] no new rows; leaving file as-is.")
