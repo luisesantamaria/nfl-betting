@@ -56,40 +56,16 @@ jobs:
             exit 1
           fi
 
-      # (Opcional) Smoke test rápido de la API en ventana semanal actual
+      # (Opcional) Smoke test rápido de la API en ventana semanal actual (sin heredoc)
       - name: Smoke test Odds endpoint (optional)
         continue-on-error: true
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
           set -eux
-          python - <<'PY'
-from datetime import datetime, timezone, timedelta
-import urllib.parse, sys, json, urllib.request
-
-now = datetime.now(timezone.utc)
-# Aproxima jueves de esta semana (UTC) y ventana de 7 días
-thu = now - timedelta(days=(now.weekday()-3)%7)
-start = thu.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-end   = (thu.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=7)).isoformat()
-
-base = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
-qs = urllib.parse.urlencode({
-  "regions": "us,us2",
-  "markets": "h2h,spreads,totals",
-  "oddsFormat": "american",
-  "dateFormat": "iso",
-  "commenceTimeFrom": start,
-  "commenceTimeTo": end,
-  "apiKey": "${{ secrets.ODDS_API_KEY }}"
-})
-url = f"{base}?{qs}"
-print("SMOKE URL:", url)
-with urllib.request.urlopen(url, timeout=30) as r:
-  body = r.read()
-  print("SMOKE status:", r.status)
-  print("SMOKE sample:", body[:800])
-PY
+          START=$(python -c 'from datetime import datetime, timezone, timedelta; now=datetime.now(timezone.utc); thu=now - timedelta(days=(now.weekday()-3)%7); print(thu.replace(hour=0,minute=0,second=0,microsecond=0).isoformat())')
+          END=$(python -c 'from datetime import datetime, timezone, timedelta; now=datetime.now(timezone.utc); thu=now - timedelta(days=(now.weekday()-3)%7); print((thu.replace(hour=0,minute=0,second=0,microsecond=0)+timedelta(days=7)).isoformat())')
+          curl -sS "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds?regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&dateFormat=iso&commenceTimeFrom=${START}&commenceTimeTo=${END}&apiKey=${ODDS_API_KEY}" | head -c 1000
 
       - name: Fetch odds (current week) – The Odds API
         env:
