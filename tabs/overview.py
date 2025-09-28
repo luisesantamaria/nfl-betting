@@ -10,7 +10,6 @@ from nfl_dash.utils import (
     add_week_order,
     season_stage,
     norm_abbr,
-    week_label_from_num,
 )
 from nfl_dash.live_scores import fetch_espn_scoreboard_df
 from nfl_dash.charts import chart_last8_profit
@@ -120,41 +119,49 @@ def _enrich_bets_with_espn(bets: pd.DataFrame, season: int) -> pd.DataFrame:
 
 
 # ----------------------------
-# Bankroll chart "pegado" al eje Y (sin punto artificial)
+# Bankroll chart pegado al eje Y (sin punto artificial)
 # ----------------------------
 def _bankroll_chart_snug(pnl: pd.DataFrame, height: int = 220) -> alt.Chart:
     """
-    - Sin punto 'Start': primera semana queda pegada al eje Y
-    - Y no empieza en 0: dominio ajustado (con pequeño pad)
-    - X sin padding: paddingInner=0 y paddingOuter=0
+    - Eje X cuantitativo 0..N-1 -> primer punto x=0 cae sobre el eje Y.
+    - Etiquetas de X con labelExpr para mostrar "Week n".
+    - Eje Y con dominio ajustado (no arranca en 0) y pad pequeño.
     """
     if pnl.empty or "bankroll" not in pnl.columns:
-        return alt.Chart(pd.DataFrame({"x": [], "bankroll": []}), height=height).mark_line().encode(
-            x=alt.X("x:N", title=None, scale=alt.Scale(paddingInner=0, paddingOuter=0)),
+        return alt.Chart(pd.DataFrame({"idx": [], "bankroll": []}), height=height).mark_line().encode(
+            x=alt.X("idx:Q", title=None, scale=alt.Scale(nice=False, zero=False)),
             y=alt.Y("bankroll:Q", title="Bankroll ($)"),
         )
 
     df = add_week_order(pnl[["week_label", "bankroll"]].copy())
-    df = df.sort_values("__order")
+    df = df.sort_values("__order").reset_index(drop=True)
     df["week_label"] = df["week_label"].astype(str)
+    df["idx"] = df.index  # 0..N-1
 
-    domain = df["week_label"].tolist()
+    labels = df["week_label"].tolist()
+    n = len(labels)
+    label_expr = "[" + ",".join([f"'{s}'" for s in labels]) + "][datum.value]"
 
     vals = pd.to_numeric(df["bankroll"], errors="coerce").dropna()
     if len(vals):
         vmin, vmax = float(vals.min()), float(vals.max())
         pad = max(1.0, 0.01 * max(vmax - vmin, 1.0))
-        y_scale = alt.Scale(domain=[vmin - pad, vmax + pad], nice=False)
+        y_scale = alt.Scale(domain=[vmin - pad, vmax + pad], nice=False, zero=False)
     else:
-        y_scale = alt.Scale(nice=True)
+        y_scale = alt.Scale(nice=True, zero=False)
 
     return (
         alt.Chart(df, height=height)
         .mark_line(point=True)
         .encode(
-            x=alt.X("week_label:N", sort=domain, title=None, scale=alt.Scale(paddingInner=0, paddingOuter=0)),
+            x=alt.X(
+                "idx:Q",
+                title=None,
+                scale=alt.Scale(domain=[0, max(0, n - 1)], nice=False, zero=False),
+                axis=alt.Axis(values=list(range(n)), labelExpr=label_expr)
+            ),
             y=alt.Y("bankroll:Q", title="Bankroll ($)", scale=y_scale),
-            tooltip=["week_label:N", alt.Tooltip("bankroll:Q", format="$.2f")],
+            tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("bankroll:Q", format="$.2f")],
         )
         .properties(width="container")
     )
@@ -213,7 +220,11 @@ def render(season: int):
     # KPIs (Initial fijo en 1000)
     _, _, total_profit, total_stake, yield_pct, profits, stakes = kpis_from_pnl(pnl)
     initial_bankroll = 1000.0
-    final_bankroll = float(pnl["bankroll"].dropna().iloc[-1]) if "bankroll" in pnl.columns and pnl["bankroll"].notna().any() else initial_bankroll
+    final_bankroll = (
+        float(pnl["bankroll"].dropna().iloc[-1])
+        if "bankroll" in pnl.columns and pnl["bankroll"].notna().any()
+        else initial_bankroll
+    )
     delta_bankroll = final_bankroll - initial_bankroll
 
     k1, k2 = st.columns(2)
