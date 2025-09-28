@@ -7,7 +7,7 @@ on:
     # Viernes 00–06 UTC  ≈ Jueves 8:00 PM–2:00 AM ET
     - cron: "*/5 0-6 * * 5"
 
-    # Juegos internacionales del domingo (ej. London/Frankfurt)
+    # Juegos internacionales del domingo (London/Frankfurt)
     # Domingo 13–16 UTC ≈ 9:00 AM–12:00 PM ET
     - cron: "*/5 13-16 * * 0"
 
@@ -48,6 +48,16 @@ jobs:
           set -euxo pipefail
           python scripts/persist_scores.py
 
+      - name: Build PnL (live)
+        env:
+          # Week 3 arranca con 1000 como pediste
+          BANKROLL_INITIAL: "1000"
+          # Si tu bets.csv está en una ruta distinta, descomenta y ajusta:
+          # BPNL_BETS_CSV: "data/live/bets.csv"
+        run: |
+          set -euxo pipefail
+          python scripts/build_pnl_live.py
+
       - name: Commit & push
         run: |
           set -e
@@ -55,7 +65,7 @@ jobs:
           git config user.email "actions@github.com"
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "chore(scores): persist finished games into odds [skip ci]"
+            git commit -m "chore(scores): persist finished games & build live PnL [skip ci]"
             git push
           else
             echo "No changes to commit."
