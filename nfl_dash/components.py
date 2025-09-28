@@ -1,21 +1,19 @@
+# nfl_dash/components.py
 import streamlit as st
 import pandas as pd
-from streamlit.components.v1 import html as st_html
 from .logos import get_logo_url
 from .utils import norm_abbr, decimal_to_american
 
 # ----------------------------
-# Helpers seguros contra pd.NA
+# Helpers seguros
 # ----------------------------
 def _s(x) -> str:
-    """Texto seguro (sin NA/None)."""
     try:
         return "" if pd.isna(x) else str(x)
     except Exception:
         return str(x or "")
 
 def _f(x):
-    """Número float seguro (None si no es convertible)."""
     try:
         v = float(x)
         if pd.isna(v):
@@ -25,14 +23,14 @@ def _f(x):
         return None
 
 # ----------------------------
-# Bet Card (con HTML en iframe)
+# BET CARD (estilo anterior)
 # ----------------------------
 def bet_card(row: pd.Series):
-    # Equipos (preferimos home/away si vienen de ESPN, si no, team/opponent)
+    # Equipos (usar home/away si llega de ESPN, si no team/opponent)
     htm = norm_abbr(_s(row.get("home_team"))) or norm_abbr(_s(row.get("team")))
     atm = norm_abbr(_s(row.get("away_team"))) or norm_abbr(_s(row.get("opponent")))
 
-    # Lado apostado -> etiqueta Pick
+    # Pick segun side
     side = _s(row.get("side")).lower()
     pick = htm if side == "home" else (atm if side == "away" else "")
 
@@ -42,28 +40,28 @@ def bet_card(row: pd.Series):
     if ml is None and dec is not None:
         ml = decimal_to_american(dec)
 
-    stake = _f(row.get("stake"))
+    stake  = _f(row.get("stake"))
     profit = _f(row.get("profit"))
 
     # Estado (de ESPN si lo hay)
-    state = _s(row.get("state")).lower()   # pre | in | post | ""
+    state = _s(row.get("state")).lower()  # pre | in | post
     short = _s(row.get("status_short")) or _s(row.get("short"))
 
     live  = state == "in"
     final = state == "post"
 
-    # Status color y label (LIVE domina en amarillo)
+    # Colores/labels
     if live:
-        status_color, status_label = "#F59E0B", "LIVE"
+        status_color, status_label = "#F59E0B", "LIVE"    # amarillo
     else:
         if profit is None:
-            status_color, status_label = "#9CA3AF", "OPEN"
+            status_color, status_label = "#6B7280", "OPEN"    # gris
         elif profit > 0:
-            status_color, status_label = "#10B981", "WIN"
+            status_color, status_label = "#10B981", "WIN"     # verde
         elif profit < 0:
-            status_color, status_label = "#EF4444", "LOSS"
+            status_color, status_label = "#EF4444", "LOSS"    # rojo
         else:
-            status_color, status_label = "#8884D8", "PUSH"
+            status_color, status_label = "#8B5CF6", "PUSH"    # morado
 
     # Semana/fecha
     wk = _s(row.get("week_label") or row.get("week"))
@@ -90,34 +88,36 @@ def bet_card(row: pd.Series):
     left_logo  = logo_tag(htm, "#1f2937", 44)
     right_logo = logo_tag(atm, "#374151", 44)
 
-    # Marcador + línea con estado corto
+    # Marcador + mini-estado (minuto) si aplica
     score_html = (
         f"<div style='font-weight:900;font-size:26px;letter-spacing:.5px;'>{int(sh)} — {int(sa)}</div>"
         if has_score else "<div style='opacity:.55;font-weight:700;'>TBD</div>"
     )
     sub_status_html = ""
-    if live and short:
-        sub_status_html = f"<div style='font-size:12px; opacity:.8; margin-top:2px;'>{short}</div>"
-    elif (not final) and short:
-        sub_status_html = f"<div style='font-size:12px; opacity:.6; margin-top:2px;'>{short}</div>"
+    if short:
+        sub_status_html = (
+            f"<div style='font-size:12px; opacity:.8; margin-top:2px;'>{short}</div>"
+            if live else f"<div style='font-size:12px; opacity:.6; margin-top:2px;'>{short}</div>"
+        )
 
     # Subtítulos bajo logos
     side_pretty = side.title() if side else ""
     subline_left  = f"{htm}{(' • '+side_pretty) if side_pretty else ''}".strip()
     subline_right = f"{atm}".strip()
 
-    # Textos métricas (Profit sólo visible si es FINAL)
+    # Métricas (Profit sólo si final)
     ml_txt    = f"{ml:+.0f}" if ml is not None else "—"
     stake_txt = f"${stake:,.2f}" if stake is not None else "—"
     prof_txt  = f"${profit:,.2f}" if (final and profit is not None) else "—"
     pick_txt  = f"Pick: {pick}" if pick else ""
 
-    # HTML total (usamos st.components.v1.html para evitar glitches de markdown)
-    card_html = f"""
+    # ---------- HTML ----------
+    st.markdown(
+        f"""
     <div style="
-        border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px;margin-bottom:10px;
-        background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.00));
-        font-size:12.5px; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji;
+        border:1px solid #e9e9e9;border-radius:12px;padding:12px; margin-bottom:10px;
+        background:linear-gradient(180deg, rgba(0,0,0,0.02), rgba(0,0,0,0.00));
+        font-size:12.5px;
     ">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div style="display:flex; align-items:center; gap:8px;">
@@ -154,13 +154,12 @@ def bet_card(row: pd.Series):
         <div><span style="opacity:.6;">Profit:</span> <strong style="color:{status_color};">{prof_txt}</strong></div>
       </div>
     </div>
-    """
-
-    # Altura auto: 220 aprox funciona bien; puedes ajustar si quieres
-    st_html(card_html, height=220)
+        """,
+        unsafe_allow_html=True,
+    )
 
 # ----------------------------
-# Game Card (tab Live)
+# GAME CARD (tab Live) – sin cambios visuales relevantes
 # ----------------------------
 def game_card(row: pd.Series):
     home = _s(row.get("home_team"))
@@ -169,19 +168,15 @@ def game_card(row: pd.Series):
     as_  = row.get("away_score", None)
     state = _s(row.get("state")).lower()
     short = _s(row.get("short"))
-    # start = _s(row.get("start_time"))  # no se muestra
 
     live  = (state == "in")
     final = (state == "post")
     if live:
-        color = "#F59E0B"
-        label = "LIVE"
+        color = "#F59E0B"; label = "LIVE"
     elif final:
-        color = "#10B981"
-        label = "FINAL"
+        color = "#10B981"; label = "FINAL"
     else:
-        color = "#6B7280"
-        label = short if short else "SCHEDULED"
+        color = "#6B7280"; label = short if short else "SCHEDULED"
 
     def logo_tag(name: str, fallback_bg="#222", size: int = 50):
         name = _s(name)
@@ -204,11 +199,12 @@ def game_card(row: pd.Series):
         if has_score else "<div style='opacity:.55;font-weight:700;'>—</div>"
     )
 
-    card_html = f"""
+    st.markdown(
+        f"""
     <div style="
-        border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:14px; margin-bottom:12px;
-        background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.00));
-        font-size:13px; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji;
+        border:1px solid #ececec;border-radius:12px;padding:14px; margin-bottom:12px;
+        background:linear-gradient(180deg, rgba(0,0,0,0.02), rgba(0,0,0,0));
+        font-size:13px;
     ">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div style="display:flex; align-items:center; gap:8px;">
@@ -234,5 +230,7 @@ def game_card(row: pd.Series):
         <div style="font-size:12px; opacity:.7; font-weight:600;">{short}</div>
       </div>
     </div>
-    """
-    st_html(card_html, height=230)
+        """,
+        unsafe_allow_html=True,
+    )
+
