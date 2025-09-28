@@ -1,10 +1,11 @@
-# nfl_dash/components.py
 import streamlit as st
 import pandas as pd
 from .logos import get_logo_url
 from .utils import norm_abbr, decimal_to_american
 
-# ---------- helpers ----------
+# ----------------------------
+# Helpers
+# ----------------------------
 def _safe_abbr(x) -> str:
     try:
         return norm_abbr(x) if pd.notna(x) else ""
@@ -20,7 +21,6 @@ def _fmt_money(x) -> str:
 
 def _status_color_and_label(profit):
     if pd.isna(profit):
-        # abierto / live -> amarillo
         return ("#facc15", "LIVE/OPEN")
     profit = float(profit)
     if profit > 0:
@@ -29,12 +29,14 @@ def _status_color_and_label(profit):
         return ("#ef4444", "LOSS")
     return ("#8b5cf6", "PUSH")
 
-def _logo_tag(team_abbr: str, fallback_bg: str = "#222", size: int = 44):
+def _logo_tag(team_abbr: str, fallback_bg: str = "#222", size: int = 44) -> str:
     team_abbr = (team_abbr or "").strip()
     url = get_logo_url(team_abbr) if team_abbr else None
     if url:
-        # imagen plana (sin HTML extraño), tamaño 44px que sabemos no causa fugas
-        return f"<img src='{url}' alt='{team_abbr}' width='{size}' height='{size}' style='object-fit:contain;'/>"
+        return (
+            f"<img src='{url}' alt='{team_abbr}' "
+            f"width='{size}' height='{size}' style='object-fit:contain;'/>"
+        )
     t = (team_abbr or 'NA')[:3]
     return (
         f"<div style='width:{size}px;height:{size}px;border-radius:50%;"
@@ -42,13 +44,15 @@ def _logo_tag(team_abbr: str, fallback_bg: str = "#222", size: int = 44):
         f"justify-content:center;font-weight:800;'>{t}</div>"
     )
 
-# ---------- bet card ----------
+# ----------------------------
+# Bet Card
+# ----------------------------
 def bet_card(row: pd.Series):
     # Equipos y pick
     home = _safe_abbr(row.get("home_team", "")) or _safe_abbr(row.get("team", ""))
     away = _safe_abbr(row.get("away_team", "")) or _safe_abbr(row.get("opponent", ""))
-
     side = str(row.get("side", "")).lower() if pd.notna(row.get("side")) else ""
+
     pick_abbr = _safe_abbr(row.get("team", ""))
     if not pick_abbr:
         if side == "home":
@@ -56,15 +60,15 @@ def bet_card(row: pd.Series):
         elif side == "away":
             pick_abbr = away
 
-    # estado / marcador
+    # marcador / estado
     sh = pd.to_numeric(row.get("score_home"), errors="coerce")
     sa = pd.to_numeric(row.get("score_away"), errors="coerce")
-    state = str(row.get("status", "")).upper()
     short = str(row.get("short", ""))
+    state = str(row.get("status", "")).upper()
 
     stake = pd.to_numeric(row.get("stake"), errors="coerce")
     dec = pd.to_numeric(row.get("decimal_odds"), errors="coerce")
-    ml = pd.to_numeric(row.get("ml"), errors="coerce")
+    ml  = pd.to_numeric(row.get("ml"), errors="coerce")
     if pd.isna(ml) and pd.notna(dec):
         ml = decimal_to_american(dec)
 
@@ -77,8 +81,8 @@ def bet_card(row: pd.Series):
     live = (state == "IN")
     dot_color = "#facc15" if live or pd.isna(profit) else ("#16a34a" if float(profit or 0) > 0 else "#ef4444")
 
-    # Logos (44px — estable)
-    left_logo = _logo_tag(home, "#1f2937", 44)
+    # Logos 44px — los que sabemos que no fugan
+    left_logo  = _logo_tag(home, "#1f2937", 44)
     right_logo = _logo_tag(away, "#374151", 44)
 
     has_score = pd.notna(sh) and pd.notna(sa)
@@ -88,9 +92,9 @@ def bet_card(row: pd.Series):
     )
     short_html = f"<div style='font-size:12px;opacity:.65;font-weight:700;margin-top:4px;'>{short}</div>" if short else ""
 
-    ml_txt = f"{ml:+.0f}" if pd.notna(ml) else "—"
+    ml_txt    = f"{ml:+.0f}" if pd.notna(ml) else "—"
     stake_txt = _fmt_money(stake)
-    prof_txt = _fmt_money(profit)
+    prof_txt  = _fmt_money(profit)
 
     html = f"""
     <div style="
@@ -131,7 +135,7 @@ def bet_card(row: pd.Series):
         <div style="font-size:12px; opacity:.8; font-weight:700; text-align:right;">{away} • Away</div>
       </div>
 
-      <!-- meta row compacto -->
+      <!-- meta row compacto (una sola línea) -->
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:nowrap; margin-top:10px;">
         <div style="display:flex; align-items:center; gap:6px; font-size:11px;">
           <span style="opacity:.7;">Pick:</span>
@@ -150,30 +154,29 @@ def bet_card(row: pd.Series):
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
-    return None  # explícito para no devolver ningún string accidental
+    return None  # evitar que Streamlit imprima algo accidentalmente
 
-# ---------- game card (Live tab) ----------
+# ----------------------------
+# Game card (Live)
+# ----------------------------
 def game_card(row: pd.Series):
     home = row.get("home_team", "")
     away = row.get("away_team", "")
-    hs = row.get("home_score", None)
-    as_ = row.get("away_score", None)
-    state = str(row.get("state", "")).lower()
-    short = str(row.get("short", ""))
+    hs   = row.get("home_score", None)
+    as_  = row.get("away_score", None)
+    state = str(row.get("state","")).lower()
+    short = str(row.get("short",""))
 
-    live = (state == "in")
+    live  = (state == "in")
     final = (state == "post")
     if live:
-        color = "#facc15"
-        label = "LIVE"
+        color = "#facc15"; label = "LIVE"
     elif final:
-        color = "#10B981"
-        label = "FINAL"
+        color = "#10B981"; label = "FINAL"
     else:
-        color = "#6B7280"
-        label = short if short else "SCHEDULED"
+        color = "#6B7280"; label = short if short else "SCHEDULED"
 
-    left_logo = _logo_tag(home, "#1f2937", 50)
+    left_logo  = _logo_tag(home, "#1f2937", 50)
     right_logo = _logo_tag(away, "#374151", 50)
 
     has_score = pd.notna(hs) and pd.notna(as_)
