@@ -50,13 +50,21 @@ jobs:
 
       - name: Build PnL (live)
         env:
-          # Week 3 arranca en 1000 como acordamos
+          # Anchor con el que arrancaste la season (Week 3 = $1000)
           BANKROLL_INITIAL: "1000"
-          # Si tu bets.csv está en otra ruta, descomenta y ajusta:
+          # Si tus CSV viven en otra ruta, puedes sobreescribir con:
           # BPNL_BETS_CSV: "data/live/bets.csv"
+          # BPNL_ODDS_CSV: "data/live/odds.csv"
         run: |
           set -euxo pipefail
           python scripts/build_pnl_live.py
+
+      - name: Annotate bets with profit & bankroll (live)
+        env:
+          BANKROLL_INITIAL: "1000"
+        run: |
+          set -euxo pipefail
+          python scripts/annotate_bets_with_profit_and_bankroll.py
 
       - name: Commit & push
         run: |
@@ -65,7 +73,7 @@ jobs:
           git config user.email "actions@github.com"
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "chore(scores): persist finished games & build live PnL [skip ci]"
+            git commit -m "chore(scores): persist scores, build live PnL, annotate bets (profit/bankroll) [skip ci]"
             git push
           else
             echo "No changes to commit."
