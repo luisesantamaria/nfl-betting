@@ -1,9 +1,10 @@
 # tabs/overview.py
+import math
 import pandas as pd
 import streamlit as st
 
 from nfl_dash.data_io import load_pnl_weekly, load_bets_this_week
-from nfl_dash.utils import kpis_from_pnl, add_week_order, season_stage
+from nfl_dash.utils import kpis_from_pnl, add_week_order, season_stage, ORDER_INDEX
 from nfl_dash.charts import chart_sparkline_cumprofit, chart_last8_profit
 
 
@@ -13,22 +14,49 @@ def render(season: int):
     # Datos base
     pnl = load_pnl_weekly(season)
     stage = season_stage(season, pnl)
-    bets_week = load_bets_this_week(season) if stage == "in_season" else pd.DataFrame()
 
     # Bets de esta semana (si hay)
+    bets_week = load_bets_this_week(season) if stage == "in_season" else pd.DataFrame()
     if not bets_week.empty:
         st.markdown("**This Week’s Bets**")
-        cols = [c for c in [
-            "week","week_label","schedule_date","side","team","opponent",
-            "ml","decimal_odds","model_prob","edge","ev","stake"
-        ] if c in bets_week.columns]
-        st.dataframe(bets_week[cols] if cols else bets_week, use_container_width=True)
+
+        # Enriquecer con scores/resultado si está disponible
+        try:
+            from nfl_dash.odds_scores import enrich_bets_with_scores
+            view = enrich_bets_with_scores(bets_week.copy(), season)
+        except Exception:
+            view = bets_week.copy()
+
+        # Ordenar como en Bets: por orden de semana y kickoff
+        if "week_label" in view.columns:
+            view["week_label"] = view["week_label"].astype(str)
+            view["__order"] = view["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+            sort_cols = ["__order"]
+            if "schedule_date" in view.columns:
+                view["schedule_date"] = pd.to_datetime(view["schedule_date"], errors="coerce")
+                sort_cols.append("schedule_date")
+            view = view.sort_values(sort_cols).drop(columns="__order", errors="ignore")
+
+        # Render con el mismo componente de tarjetas que usa la pestaña Bets
+        from nfl_dash.components import bet_card as render_bet_card  # import perezoso
+        cards = list(view.itertuples(index=False))
+        idx = 0
+        cols_per_row = 4
+        rows = math.ceil(len(cards) / cols_per_row)
+        for _ in range(rows):
+            col_objs = st.columns(cols_per_row)
+            for j in range(cols_per_row):
+                if idx < len(cards):
+                    with col_objs[j]:
+                        render_bet_card(pd.Series(cards[idx]._asdict()))
+                    idx += 1
+
         st.divider()
 
     # Overview de temporada
     st.markdown("**Season Overview**")
     if pnl.empty:
-        st.caption("No `pnl_weekly_{year}.csv` found for this season.")
+        st.caption("No `pnl.csv` found for this season.")
         return
 
     initial_bankroll, final_bankroll, total_profit, total_stake, yield_pct, profits, stakes = kpis_from_pnl(pnl)
