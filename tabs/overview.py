@@ -17,20 +17,21 @@ from nfl_dash.live_scores import fetch_espn_scoreboard_df
 LIVE_ODDS = Path("data/live/odds.csv")
 
 
-def _enrich_scores_for_display(view: pd.DataFrame) -> pd.DataFrame:
+def _enrich_scores_for_display(view: pd.DataFrame, season: int) -> pd.DataFrame:
     """
-    Añade columnas para que las tarjetas muestren marcador:
-      - home_team, away_team, home_score, away_score
-      - team_score, opponent_score (por si el componente los usa)
-    1) Intenta odds.csv (más confiable para 'FINAL')
-    2) Fallback ESPN para LIVE (state='in')
+    Rellena columnas para las tarjetas:
+      - home_team, away_team
+      - home_score, away_score (¡importante! es lo que consume el bet_card)
+      - team_score, opponent_score (por si el componente también los usa)
+    1) Usa data/live/odds.csv (score_home/score_away) -> mapea a home_score/away_score
+    2) Si falta y el juego arrancó, fallback ESPN (home_score/away_score ya vienen con esos nombres)
     """
     if view.empty:
         return view
 
     v = view.copy()
 
-    # --- 1) Enriquecer con odds.csv ---
+    # ---- 1) odds.csv (FINAL y muchos LIVE) ----
     if LIVE_ODDS.exists():
         odds = pd.read_csv(LIVE_ODDS, low_memory=False)
 
@@ -68,91 +69,80 @@ def _enrich_scores_for_display(view: pd.DataFrame) -> pd.DataFrame:
             tmp["abs_time_diff"] = (tmp["schedule_date_o"] - tmp["schedule_date"]).abs().dt.total_seconds()
             tmp = tmp.sort_values(["bet_idx", "abs_time_diff"]).groupby("bet_idx", as_index=False).first()
 
-            # copia a v
+            # integrar y MAPEAR nombres
             v = v.reset_index().rename(columns={"index": "bet_idx"}).merge(
                 tmp[["bet_idx", "home_team", "away_team", "score_home", "score_away", "home_win"]],
                 on="bet_idx", how="left"
             ).drop(columns=["bet_idx"])
 
-            # Deriva team/opponent scores por si el componente los usa
-            # Identifica si el pick coincide con el home del evento
-            is_team_home = v["home_team"].notna() & (v["team"] == v["home_team"])
-            v["team_score"] = np.where(is_team_home, v["score_home"], v["score_away"])
-            v["opponent_score"] = np.where(is_team_home, v["score_away"], v["score_home"])
+            # mapear a los nombres que tu tarjeta espera
+            v["home_score"] = v["score_home"]
+            v["away_score"] = v["score_away"]
 
-    # --- 2) Fallback ESPN para LIVE ---
-    # Si faltan scores pero el juego ya arrancó, intenta ESPN
+            # por si el componente usa team/opponent_score
+            is_team_home = v["home_team"].notna() & (v["team"] == v["home_team"])
+            v["team_score"] = np.where(is_team_home, v["home_score"], v["away_score"])
+            v["opponent_score"] = np.where(is_team_home, v["away_score"], v["home_score"])
+
+    # ---- 2) Fallback ESPN para LIVE (si sigue faltando) ----
     now_utc = datetime.now(timezone.utc)
-    mask_need = (
-        v["home_team"].notna() & v["away_team"].notna() &
-        (v["score_home"].isna() | v["score_away"].isna()) &
+    need_espsn = (
+        v.get("home_team").notna() & v.get("away_team").notna() &
+        (v.get("home_score").isna() | v.get("away_score").isna()) &
         pd.to_datetime(v.get("schedule_date"), errors="coerce", utc=True).le(now_utc)
-    )
-    if mask_need.any():
-        for wk in sorted(v.loc[mask_need, "week"].dropna().unique().tolist()):
+    ) if {"home_team","away_team","schedule_date"}.issubset(v.columns) else pd.Series(False, index=v.index)
+
+    if need_espsn.any():
+        weeks = sorted(pd.to_numeric(v.loc[need_espsn, "week"], errors="coerce").dropna().unique().tolist())
+        for wk in weeks:
             try:
-                sb = fetch_espn_scoreboard_df(int(v["season"].iloc[0]), int(wk))
+                sb = fetch_espn_scoreboard_df(int(season), int(wk))
             except Exception:
                 sb = pd.DataFrame()
 
             if sb.empty:
                 continue
 
-            # Normaliza a abrevs
+            # normaliza a abrevs
             for c in ("home_team", "away_team"):
                 sb[c] = sb[c].astype(str).map(norm_abbr)
 
-            # quedarnos solo con juegos in/post
+            # solo in/post
             sb = sb[sb["state"].isin(["in", "post"])].copy()
+            if sb.empty:
+                continue
 
-            # merge por par de equipos (sin orden)
-            sub = v[(v["week"] == wk) & mask_need].reset_index().rename(columns={"index": "bet_idx"})
+            sub = v[(pd.to_numeric(v["week"], errors="coerce") == wk) & need_espsn].reset_index()
+            sub = sub.rename(columns={"index": "bet_idx"})
+
             cand = sub.merge(
-                sb[["home_team", "away_team", "home_score", "away_score", "start_time", "state"]],
+                sb[["home_team", "away_team", "home_score", "away_score", "start_time"]],
                 on=[], how="cross"
             )
-
-            # filtramos coincidencias de par
             same_pair = (
                 ((cand["team"] == cand["home_team_y"]) & (cand["opponent"] == cand["away_team_y"])) |
                 ((cand["team"] == cand["away_team_y"]) & (cand["opponent"] == cand["home_team_y"]))
             )
             cand = cand.loc[same_pair].copy()
+            if cand.empty:
+                continue
 
-            # kickoff más cercano
-            cand["abs_time_diff"] = (pd.to_datetime(cand["start_time"], utc=True) -
-                                     pd.to_datetime(cand["schedule_date"], utc=True)).abs().dt.total_seconds()
+            cand["abs_time_diff"] = (
+                pd.to_datetime(cand["start_time"], utc=True) -
+                pd.to_datetime(cand["schedule_date"], utc=True)
+            ).abs().dt.total_seconds()
             cand = cand.sort_values(["bet_idx", "abs_time_diff"]).groupby("bet_idx", as_index=False).first()
 
-            # aplicar updates: solo rellenamos donde falte
-            if not cand.empty:
-                upd = cand[["bet_idx", "home_team_y", "away_team_y", "home_score", "away_score", "state"]].copy()
-                upd = upd.rename(columns={
-                    "home_team_y": "home_team",
-                    "away_team_y": "away_team",
-                })
-                v = sub.merge(upd, on="bet_idx", how="left", suffixes=("", "_espn")).set_index("bet_idx")
+            # aplicar: solo rellenamos donde falte
+            for _, r in cand.iterrows():
+                i = int(r["bet_idx"])
+                if pd.isna(v.at[i, "home_score"]): v.at[i, "home_score"] = r["home_score"]
+                if pd.isna(v.at[i, "away_score"]): v.at[i, "away_score"] = r["away_score"]
 
-                for col in ("home_team", "away_team", "score_home", "score_away"):
-                    espn_col = col if col in upd.columns else col.replace("score_", "")  # score_home->home_score
-                    if espn_col in v.columns:
-                        v[col] = v[col].combine_first(v[espn_col])
-
-                # Recalcula team/opponent score cuando llenamos desde ESPN
-                is_team_home = v["home_team"].notna() & (v["team"] == v["home_team"])
-                v["team_score"] = v["team_score"].combine_first(np.where(is_team_home, v["score_home"], v["score_away"]))
-                v["opponent_score"] = v["opponent_score"].combine_first(np.where(is_team_home, v["score_away"], v["score_home"]))
-
-                # Regresa al DF original
-                v = v.reset_index(drop=True)
-
-                # Escribe de vuelta en el original por índices
-                idxs = sub["bet_idx"].values
-                base = view.index.take(idxs)
-                view.loc[base, :] = v.loc[:, view.columns].values
-
-                # y sigue con el v que venimos regresando
-                v = view
+            # actualizar auxiliares
+            is_team_home = v["home_team"].notna() & (v["team"] == v["home_team"])
+            v["team_score"] = v["team_score"].combine_first(np.where(is_team_home, v["home_score"], v["away_score"]))
+            v["opponent_score"] = v["opponent_score"].combine_first(np.where(is_team_home, v["away_score"], v["home_score"]))
 
     return v
 
@@ -160,25 +150,24 @@ def _enrich_scores_for_display(view: pd.DataFrame) -> pd.DataFrame:
 def render(season: int):
     st.subheader("Overview")
 
-    # --- Datos base
     pnl = load_pnl_weekly(season)
     stage = season_stage(season, pnl)
 
-    # --- Bets de esta semana (solo leer + enriquecer PARA MOSTRAR)
+    # --- Bets de esta semana (solo leer lo ya anotado, + scores para mostrar)
     bets_week = load_bets_this_week(season) if stage == "in_season" else pd.DataFrame()
     if not bets_week.empty:
         st.markdown("**This Week’s Bets**")
 
         view = bets_week.copy()
 
-        # Enriquecer scores para la UI (odds -> ESPN)
+        # Enriquecer SOLO PARA MOSTRAR (odds -> ESPN), mapeando nombres de columnas
         try:
-            view = _enrich_scores_for_display(view)
+            view = _enrich_scores_for_display(view, season)
         except Exception:
             pass
 
-        # Normaliza tipos mínimos (sin cálculos de negocio)
-        for c in ("team_score", "opponent_score", "score_home", "score_away", "profit", "stake", "decimal_odds"):
+        # Normaliza tipos mínimos
+        for c in ("home_score", "away_score", "team_score", "opponent_score", "profit", "stake", "decimal_odds"):
             if c in view.columns:
                 view[c] = pd.to_numeric(view[c], errors="coerce")
         if "schedule_date" in view.columns:
@@ -212,7 +201,7 @@ def render(season: int):
 
         st.divider()
 
-    # --- Overview de temporada (leyendo pnl.csv ya generado por el workflow)
+    # --- Overview de temporada (lee pnl.csv ya generado por workflow)
     st.markdown("**Season Overview**")
     if pnl.empty:
         st.caption("No `pnl.csv` found for this season.")
@@ -228,7 +217,6 @@ def render(season: int):
 
     H_BANK, H_PROF = (380, 380) if bets_week.empty else (200, 200)
 
-    # Cumulative profit
     cum_df = add_week_order(pd.DataFrame({
         "week_label": pnl["week_label"].astype(str),
         "cum_profit": profits.cumsum()
