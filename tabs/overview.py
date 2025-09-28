@@ -1,150 +1,148 @@
 # tabs/overview.py
 import math
-from pathlib import Path
 from datetime import datetime, timezone
-
 import numpy as np
 import pandas as pd
 import streamlit as st
 
 from nfl_dash.data_io import load_pnl_weekly, load_bets_this_week
-from nfl_dash.utils import (
-    kpis_from_pnl, add_week_order, season_stage, ORDER_INDEX, norm_abbr
-)
+from nfl_dash.utils import kpis_from_pnl, add_week_order, season_stage, ORDER_INDEX, norm_abbr
 from nfl_dash.charts import chart_sparkline_cumprofit, chart_last8_profit
 from nfl_dash.live_scores import fetch_espn_scoreboard_df
 
-LIVE_ODDS = Path("data/live/odds.csv")
+
+# ---------- Mapa robusto DisplayName ESPN -> Abreviatura ----------
+_TEAM_ABBR = {
+    "arizona cardinals": "ARI",
+    "atlanta falcons": "ATL",
+    "baltimore ravens": "BAL",
+    "buffalo bills": "BUF",
+    "carolina panthers": "CAR",
+    "chicago bears": "CHI",
+    "cincinnati bengals": "CIN",
+    "cleveland browns": "CLE",
+    "dallas cowboys": "DAL",
+    "denver broncos": "DEN",
+    "detroit lions": "DET",
+    "green bay packers": "GB",
+    "houston texans": "HOU",
+    "indianapolis colts": "IND",
+    "jacksonville jaguars": "JAX",
+    "kansas city chiefs": "KC",
+    "las vegas raiders": "LV",
+    "los angeles chargers": "LAC",
+    "los angeles rams": "LA",   # tu dataset usa "LA" para Rams
+    "miami dolphins": "MIA",
+    "minnesota vikings": "MIN",
+    "new england patriots": "NE",
+    "new orleans saints": "NO",
+    "new york giants": "NYG",
+    "new york jets": "NYJ",
+    "philadelphia eagles": "PHI",
+    "pittsburgh steelers": "PIT",
+    "san francisco 49ers": "SF",
+    "seattle seahawks": "SEA",
+    "tampa bay buccaneers": "TB",
+    "tennessee titans": "TEN",
+    "washington commanders": "WAS",  # en tus bets aparece WAS/WSH: norm_abbr cubre ambas
+}
+
+def _espn_to_abbr(name: str) -> str:
+    s = str(name or "").strip().lower()
+    ab = _TEAM_ABBR.get(s)
+    if ab:
+        return ab
+    # fallback: intenta normalizar cadenas raras con norm_abbr
+    return norm_abbr(name)
 
 
-def _enrich_scores_for_display(view: pd.DataFrame, season: int) -> pd.DataFrame:
-    """
-    Rellena columnas para las tarjetas:
-      - home_team, away_team
-      - home_score, away_score (¡importante! es lo que consume el bet_card)
-      - team_score, opponent_score (por si el componente también los usa)
-    1) Usa data/live/odds.csv (score_home/score_away) -> mapea a home_score/away_score
-    2) Si falta y el juego arrancó, fallback ESPN (home_score/away_score ya vienen con esos nombres)
-    """
+def _scores_from_espn_for_week(season: int, week: int) -> pd.DataFrame:
+    """Devuelve df con columnas: home_abbr, away_abbr, home_score, away_score, start_time, state."""
+    sb = fetch_espn_scoreboard_df(season=int(season), week=int(week))
+    if sb.empty:
+        return sb
+
+    out = sb.copy()
+    out["home_abbr"] = out["home_team"].astype(str).map(_espn_to_abbr)
+    out["away_abbr"] = out["away_team"].astype(str).map(_espn_to_abbr)
+    out["start_time"] = pd.to_datetime(out["start_time"], errors="coerce", utc=True)
+    out["state"] = out["state"].astype(str).str.lower()
+    # solo juegos con equipos válidos
+    out = out[out["home_abbr"].notna() & out["away_abbr"].notna()].copy()
+    return out[["home_abbr", "away_abbr", "home_score", "away_score", "start_time", "state"]]
+
+
+def _enrich_bets_with_espn(view: pd.DataFrame) -> pd.DataFrame:
+    """Rellena home_team, away_team, home_score, away_score (y team/opponent_score) SOLO desde ESPN."""
     if view.empty:
         return view
 
     v = view.copy()
+    # tipificar lo mínimo
+    if "schedule_date" in v.columns:
+        v["schedule_date"] = pd.to_datetime(v["schedule_date"], errors="coerce", utc=True)
+    for c in ("season", "week"):
+        if c in v.columns:
+            v[c] = pd.to_numeric(v[c], errors="coerce")
 
-    # ---- 1) odds.csv (FINAL y muchos LIVE) ----
-    if LIVE_ODDS.exists():
-        odds = pd.read_csv(LIVE_ODDS, low_memory=False)
+    # normaliza abrevs de bets por si vienen medio raras
+    for c in ("team", "opponent"):
+        if c in v.columns:
+            v[c] = v[c].astype(str).map(norm_abbr)
 
-        need = [
-            "season", "week", "week_label", "schedule_date",
-            "home_team", "away_team", "score_home", "score_away", "home_win"
-        ]
-        if all(c in odds.columns for c in need):
-            # tipos/fechas
-            for c in ("season", "week"):
-                v[c] = pd.to_numeric(v[c], errors="coerce")
-                odds[c] = pd.to_numeric(odds[c], errors="coerce")
-            v["schedule_date"] = pd.to_datetime(v.get("schedule_date"), errors="coerce", utc=True)
-            odds["schedule_date"] = pd.to_datetime(odds.get("schedule_date"), errors="coerce", utc=True)
+    v["home_team"] = v.get("home_team", np.nan)
+    v["away_team"] = v.get("away_team", np.nan)
+    v["home_score"] = pd.to_numeric(v.get("home_score", np.nan), errors="coerce")
+    v["away_score"] = pd.to_numeric(v.get("away_score", np.nan), errors="coerce")
 
-            # normaliza abrevs
-            for c in ("team", "opponent"):
-                v[c] = v[c].astype(str).map(norm_abbr)
-            for c in ("home_team", "away_team"):
-                odds[c] = odds[c].astype(str).map(norm_abbr)
+    # agrupa por (season, week) y trae el scoreboard de ESPN por grupo
+    grp_cols = [c for c in ("season", "week") if c in v.columns]
+    if not grp_cols:
+        return v  # sin week/season no podemos consultar ESPN de forma confiable
 
-            tmp = v.reset_index().rename(columns={"index": "bet_idx"}).merge(
-                odds[need],
-                on=["season", "week", "week_label"],
-                how="left",
-                suffixes=("", "_o"),
-            )
+    v = v.reset_index().rename(columns={"index": "bet_idx"})
+    for (ssn, wk), sub_idx in v.groupby(grp_cols).groups.items():
+        sub = v.loc[sub_idx].copy()
+        if pd.isna(ssn) or pd.isna(wk):
+            continue
 
-            same_pair = (
-                ((tmp["team"] == tmp["home_team"]) & (tmp["opponent"] == tmp["away_team"])) |
-                ((tmp["team"] == tmp["away_team"]) & (tmp["opponent"] == tmp["home_team"]))
-            )
-            tmp = tmp.loc[same_pair].copy()
+        sb = _scores_from_espn_for_week(int(ssn), int(wk))
+        if sb.empty:
+            continue
 
-            tmp["abs_time_diff"] = (tmp["schedule_date_o"] - tmp["schedule_date"]).abs().dt.total_seconds()
-            tmp = tmp.sort_values(["bet_idx", "abs_time_diff"]).groupby("bet_idx", as_index=False).first()
+        # cross-merge y filtra por par de equipos (sin importar orden)
+        cand = sub.merge(sb, how="cross")
+        same_pair = (
+            ((cand["team"] == cand["home_abbr"]) & (cand["opponent"] == cand["away_abbr"])) |
+            ((cand["team"] == cand["away_abbr"]) & (cand["opponent"] == cand["home_abbr"]))
+        )
+        cand = cand.loc[same_pair].copy()
+        if cand.empty:
+            continue
 
-            # integrar y MAPEAR nombres
-            v = v.reset_index().rename(columns={"index": "bet_idx"}).merge(
-                tmp[["bet_idx", "home_team", "away_team", "score_home", "score_away", "home_win"]],
-                on="bet_idx", how="left"
-            ).drop(columns=["bet_idx"])
+        # elige el kickoff más cercano a la schedule_date de la bet
+        if "schedule_date" in cand.columns:
+            sd = pd.to_datetime(cand["schedule_date"], errors="coerce", utc=True)
+            cand["abs_diff"] = (cand["start_time"] - sd).abs().dt.total_seconds()
+        else:
+            cand["abs_diff"] = 0
+        pick = (cand.sort_values(["bet_idx", "abs_diff"])
+                    .groupby("bet_idx", as_index=False).first())
 
-            # mapear a los nombres que tu tarjeta espera
-            v["home_score"] = v["score_home"]
-            v["away_score"] = v["score_away"]
+        # Escribir de vuelta en v: define home/away + scores según ESPN
+        for _, row in pick.iterrows():
+            i = int(row["bet_idx"])
+            v.at[i, "home_team"] = row["home_abbr"]
+            v.at[i, "away_team"] = row["away_abbr"]
+            v.at[i, "home_score"] = row["home_score"]
+            v.at[i, "away_score"] = row["away_score"]
 
-            # por si el componente usa team/opponent_score
-            is_team_home = v["home_team"].notna() & (v["team"] == v["home_team"])
-            v["team_score"] = np.where(is_team_home, v["home_score"], v["away_score"])
-            v["opponent_score"] = np.where(is_team_home, v["away_score"], v["home_score"])
+    # Deriva team_score/opponent_score (por si el bet_card las usa)
+    is_team_home = v["home_team"].notna() & (v["team"] == v["home_team"])
+    v["team_score"] = np.where(is_team_home, v["home_score"], v["away_score"])
+    v["opponent_score"] = np.where(is_team_home, v["away_score"], v["home_score"])
 
-    # ---- 2) Fallback ESPN para LIVE (si sigue faltando) ----
-    now_utc = datetime.now(timezone.utc)
-    need_espsn = (
-        v.get("home_team").notna() & v.get("away_team").notna() &
-        (v.get("home_score").isna() | v.get("away_score").isna()) &
-        pd.to_datetime(v.get("schedule_date"), errors="coerce", utc=True).le(now_utc)
-    ) if {"home_team","away_team","schedule_date"}.issubset(v.columns) else pd.Series(False, index=v.index)
-
-    if need_espsn.any():
-        weeks = sorted(pd.to_numeric(v.loc[need_espsn, "week"], errors="coerce").dropna().unique().tolist())
-        for wk in weeks:
-            try:
-                sb = fetch_espn_scoreboard_df(int(season), int(wk))
-            except Exception:
-                sb = pd.DataFrame()
-
-            if sb.empty:
-                continue
-
-            # normaliza a abrevs
-            for c in ("home_team", "away_team"):
-                sb[c] = sb[c].astype(str).map(norm_abbr)
-
-            # solo in/post
-            sb = sb[sb["state"].isin(["in", "post"])].copy()
-            if sb.empty:
-                continue
-
-            sub = v[(pd.to_numeric(v["week"], errors="coerce") == wk) & need_espsn].reset_index()
-            sub = sub.rename(columns={"index": "bet_idx"})
-
-            cand = sub.merge(
-                sb[["home_team", "away_team", "home_score", "away_score", "start_time"]],
-                on=[], how="cross"
-            )
-            same_pair = (
-                ((cand["team"] == cand["home_team_y"]) & (cand["opponent"] == cand["away_team_y"])) |
-                ((cand["team"] == cand["away_team_y"]) & (cand["opponent"] == cand["home_team_y"]))
-            )
-            cand = cand.loc[same_pair].copy()
-            if cand.empty:
-                continue
-
-            cand["abs_time_diff"] = (
-                pd.to_datetime(cand["start_time"], utc=True) -
-                pd.to_datetime(cand["schedule_date"], utc=True)
-            ).abs().dt.total_seconds()
-            cand = cand.sort_values(["bet_idx", "abs_time_diff"]).groupby("bet_idx", as_index=False).first()
-
-            # aplicar: solo rellenamos donde falte
-            for _, r in cand.iterrows():
-                i = int(r["bet_idx"])
-                if pd.isna(v.at[i, "home_score"]): v.at[i, "home_score"] = r["home_score"]
-                if pd.isna(v.at[i, "away_score"]): v.at[i, "away_score"] = r["away_score"]
-
-            # actualizar auxiliares
-            is_team_home = v["home_team"].notna() & (v["team"] == v["home_team"])
-            v["team_score"] = v["team_score"].combine_first(np.where(is_team_home, v["home_score"], v["away_score"]))
-            v["opponent_score"] = v["opponent_score"].combine_first(np.where(is_team_home, v["away_score"], v["home_score"]))
-
-    return v
+    return v.drop(columns=["bet_idx"], errors="ignore")
 
 
 def render(season: int):
@@ -153,20 +151,19 @@ def render(season: int):
     pnl = load_pnl_weekly(season)
     stage = season_stage(season, pnl)
 
-    # --- Bets de esta semana (solo leer lo ya anotado, + scores para mostrar)
+    # --- Bets de esta semana: leemos y enriquecemos SOLO con ESPN ---
     bets_week = load_bets_this_week(season) if stage == "in_season" else pd.DataFrame()
     if not bets_week.empty:
         st.markdown("**This Week’s Bets**")
 
         view = bets_week.copy()
-
-        # Enriquecer SOLO PARA MOSTRAR (odds -> ESPN), mapeando nombres de columnas
         try:
-            view = _enrich_scores_for_display(view, season)
+            view = _enrich_bets_with_espn(view)
         except Exception:
+            # si ESPN falla por cualquier motivo, mostramos sin scores
             pass
 
-        # Normaliza tipos mínimos
+        # casting mínimo y orden
         for c in ("home_score", "away_score", "team_score", "opponent_score", "profit", "stake", "decimal_odds"):
             if c in view.columns:
                 view[c] = pd.to_numeric(view[c], errors="coerce")
@@ -177,7 +174,6 @@ def render(season: int):
         if "week_label" in view.columns:
             view["week_label"] = view["week_label"].astype(str)
 
-        # Orden como en Bets
         if "week_label" in view.columns:
             view["__order"] = view["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
             sort_cols = ["__order"]
@@ -185,8 +181,7 @@ def render(season: int):
                 sort_cols.append("schedule_date")
             view = view.sort_values(sort_cols).drop(columns="__order", errors="ignore")
 
-        # Render con el mismo componente de tarjetas
-        from nfl_dash.components import bet_card as render_bet_card  # import perezoso
+        from nfl_dash.components import bet_card as render_bet_card
         cards = list(view.itertuples(index=False))
         idx = 0
         cols_per_row = 4
@@ -201,7 +196,7 @@ def render(season: int):
 
         st.divider()
 
-    # --- Overview de temporada (lee pnl.csv ya generado por workflow)
+    # --- Season Overview (lee pnl.csv ya generado por workflow) ---
     st.markdown("**Season Overview**")
     if pnl.empty:
         st.caption("No `pnl.csv` found for this season.")
