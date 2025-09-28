@@ -2,178 +2,200 @@
 import math
 import pandas as pd
 import streamlit as st
+import altair as alt
 
 from nfl_dash.data_io import load_pnl_weekly, load_bets_this_week
-from nfl_dash.utils import ORDER_INDEX, add_week_order, norm_abbr
-from nfl_dash.charts import chart_last8_profit, chart_bankroll
-from nfl_dash.components import bet_card
+from nfl_dash.utils import kpis_from_pnl, add_week_order, season_stage, norm_abbr, week_label_from_num
 from nfl_dash.live_scores import fetch_espn_scoreboard_df
+from nfl_dash.charts import chart_last8_profit
+from nfl_dash.components import bet_card
 
 
-# -------------------------------------------------
-# Helpers ESPN
-# -------------------------------------------------
-def _mk_key(a: str | None, b: str | None) -> str:
-    """Llave estable para emparejar, evitando sets/frozensets (que rompen .loc)."""
-    a = (str(a or "")).upper().strip()
-    b = (str(b or "")).upper().strip()
-    return "||".join(sorted([a, b]))  # p. ej. "ARI||SEA"
+# ----------------------------
+# Enriquecer bets con ESPN (scores/estado) sin debug
+# ----------------------------
+def _dominant_week(bets: pd.DataFrame) -> int | None:
+    if "week" in bets.columns and pd.to_numeric(bets["week"], errors="coerce").notna().any():
+        return int(pd.to_numeric(bets["week"], errors="coerce").dropna().mode().iloc[0])
+    if "week_label" in bets.columns:
+        vals = bets["week_label"].astype(str).str.extract(r"(\d+)")[0]
+        vals = pd.to_numeric(vals, errors="coerce").dropna()
+        if len(vals):
+            return int(vals.mode().iloc[0])
+    return None
 
 
-def _fetch_week_scores(season: int, week: int) -> pd.DataFrame:
+def _espn_index_for_week(season: int, week: int) -> dict[tuple[str, str], dict]:
+    """
+    Devuelve un diccionario {(home_abbr, away_abbr) -> fila_dict} y también (away,home) -> fila_dict
+    """
     try:
-        df = fetch_espn_scoreboard_df(season=season, week=int(week)).copy()
+        es = fetch_espn_scoreboard_df(season=season, week=week)
     except Exception:
-        return pd.DataFrame(
-            columns=[
-                "season",
-                "week",
-                "start_time",
-                "state",
-                "short",
-                "home_team",
-                "home_score",
-                "away_team",
-                "away_score",
-            ]
-        )
+        es = pd.DataFrame()
 
-    if df.empty:
-        return df
-
-    # Normalizamos a abreviaturas propias
-    df["home_abbr"] = df["home_team"].astype(str).map(norm_abbr)
-    df["away_abbr"] = df["away_team"].astype(str).map(norm_abbr)
-
-    if "start_time" in df.columns:
-        df["start_time"] = pd.to_datetime(df["start_time"], errors="coerce", utc=True)
-    df["state"] = df.get("state", pd.Series(dtype=str)).astype(str).str.lower()
-
-    # Llave estable de match
-    df["match_key"] = df.apply(lambda r: _mk_key(r.get("home_abbr"), r.get("away_abbr")), axis=1)
-    return df
-
-
-def _enrich_bets_with_espn(bets_df: pd.DataFrame, season: int, *, debug: bool = False) -> pd.DataFrame:
-    if bets_df.empty:
-        return bets_df
-
-    v = bets_df.copy()
-
-    # Semana objetivo
-    week_final = None
-    if "week" in v.columns:
-        try:
-            week_final = int(pd.to_numeric(v["week"], errors="coerce").dropna().max())
-        except Exception:
-            week_final = None
-    if week_final is None:
-        if "week_order" in v.columns:
-            week_final = int(pd.to_numeric(v["week_order"], errors="coerce").dropna().max())
-        else:
-            week_final = 1
-
-    es = _fetch_week_scores(season=season, week=week_final)
     if es.empty:
-        return v
+        return {}
 
-    # Para debug visual
-    debug_scores = es[["home_abbr", "away_abbr", "home_score", "away_score", "start_time", "state", "short"]].copy()
+    es = es.copy()
+    es["home_abbr"] = es["home_team"].astype(str).map(norm_abbr)
+    es["away_abbr"] = es["away_team"].astype(str).map(norm_abbr)
 
-    # Index por match_key
-    es_idx = es.set_index("match_key")
+    idx = {}
+    for r in es.to_dict("records"):
+        ha, aa = r["home_abbr"], r["away_abbr"]
+        idx[(ha, aa)] = r
+        idx[(aa, ha)] = r  # par invertido para emparejar por team/opponent + side
+    return idx
 
-    # Columnas destino (si no existen)
-    for col in ["home_team", "away_team", "home_score", "away_score", "state", "status_short", "start_time"]:
-        if col not in v.columns:
-            v[col] = pd.NA
 
-    # Abreviaturas normalizadas desde bets y su match_key
-    v["__team_abbr"] = v.get("team", "").astype(str).map(norm_abbr)
-    v["__opp_abbr"]  = v.get("opponent", "").astype(str).map(norm_abbr)
-    v["match_key"]   = v.apply(lambda r: _mk_key(r["__team_abbr"], r["__opp_abbr"]), axis=1)
+def _enrich_bets_with_espn(bets: pd.DataFrame, season: int) -> pd.DataFrame:
+    if bets.empty:
+        return bets
 
-    matched_rows = []
-    for i, row in v.iterrows():
-        key = row["match_key"]
-        if key in es_idx.index:
-            srow = es_idx.loc[key]
-            # Si hubiera duplicados, tomamos el primero
-            if isinstance(srow, pd.DataFrame):
-                srow = srow.iloc[0]
+    wk = _dominant_week(bets)
+    if wk is None:
+        return bets
 
-            v.at[i, "home_team"]    = srow.get("home_abbr")
-            v.at[i, "away_team"]    = srow.get("away_abbr")
-            v.at[i, "home_score"]   = srow.get("home_score")
-            v.at[i, "away_score"]   = srow.get("away_score")
-            v.at[i, "state"]        = srow.get("state")
-            v.at[i, "status_short"] = srow.get("short")
-            v.at[i, "start_time"]   = srow.get("start_time")
+    idx = _espn_index_for_week(season, wk)
+    if not idx:
+        return bets
 
-            matched_rows.append({
-                "bet_idx": i,
-                "home_abbr": srow.get("home_abbr"),
-                "away_abbr": srow.get("away_abbr"),
-                "home_score": srow.get("home_score"),
-                "away_score": srow.get("away_score"),
-                "start_time": srow.get("start_time"),
-                "state": srow.get("state"),
-            })
+    v = bets.copy()
+    v["team"] = v.get("team", "").astype(str).map(norm_abbr)
+    v["opponent"] = v.get("opponent", "").astype(str).map(norm_abbr)
+    v["side"] = v.get("side", "").astype(str).str.lower()
 
-    if debug:
-        with st.expander("Debug · ESPN matching (Overview)", expanded=False):
-            st.markdown(f"**(season={season}, week={week_final}) — ESPN scoreboard**")
-            st.dataframe(debug_scores, use_container_width=True)
-            if matched_rows:
-                st.markdown("**Candidatos (emparejados por equipo)**")
-                st.dataframe(pd.DataFrame(matched_rows), use_container_width=True)
+    # Derivar home/away desde team/opponent + side
+    home = []
+    away = []
+    for r in v.itertuples(index=False):
+        t = getattr(r, "team", "")
+        o = getattr(r, "opponent", "")
+        s = getattr(r, "side", "")
+        if s == "home":
+            home.append(t); away.append(o)
+        elif s == "away":
+            home.append(o); away.append(t)
+        else:
+            # No hay side claro: intentamos adivinar con el índice
+            if (t, o) in idx:
+                ha = t if idx[(t, o)]["home_abbr"] == t else o
+                aa = o if ha == t else t
+                home.append(ha); away.append(aa)
+            elif (o, t) in idx:
+                ha = o if idx[(o, t)]["home_abbr"] == o else t
+                aa = t if ha == o else o
+                home.append(ha); away.append(aa)
             else:
-                st.caption("No hubo emparejamientos por equipo en esta vista.")
+                home.append(t); away.append(o)
 
-    v = v.drop(columns=["__team_abbr", "__opp_abbr"], errors="ignore")
+    v["home_team"] = home
+    v["away_team"] = away
+
+    # Rellenar scores/estado si existe match en ESPN
+    add_cols = {
+        "home_score": [],
+        "away_score": [],
+        "state": [],
+        "status_short": [],
+        "start_time": [],
+    }
+    for r in v.itertuples(index=False):
+        key = (getattr(r, "home_team"), getattr(r, "away_team"))
+        srow = idx.get(key)
+        if not srow:
+            for k in add_cols: add_cols[k].append(pd.NA)
+            continue
+        add_cols["home_score"].append(srow.get("home_score"))
+        add_cols["away_score"].append(srow.get("away_score"))
+        add_cols["state"].append(str(srow.get("state") or "").lower())
+        add_cols["status_short"].append(srow.get("short"))
+        add_cols["start_time"].append(srow.get("start_time"))
+
+    for k, vals in add_cols.items():
+        v[k] = vals
+
+    # Tipos
+    if "start_time" in v.columns:
+        v["start_time"] = pd.to_datetime(v["start_time"], errors="coerce", utc=True)
+    for c in ("home_score", "away_score"):
+        if c in v.columns:
+            v[c] = pd.to_numeric(v[c], errors="coerce")
+
     return v
 
 
-# -------------------------------------------------
-# Render
-# -------------------------------------------------
+# ----------------------------
+# Bankroll chart con ancla 1000 al inicio
+# ----------------------------
+def _bankroll_chart_with_anchor(pnl: pd.DataFrame, height: int = 220):
+    """
+    Construye un dataframe con un punto 'Start' = 1000 y luego (Week N, bankroll) en orden.
+    """
+    pts = []
+    pts.append({"x_label": "Start", "order": 0, "bankroll": 1000.0})
+
+    if not pnl.empty and "bankroll" in pnl.columns:
+        tmp = add_week_order(pnl[["week_label", "bankroll"]].copy())
+        tmp = tmp.sort_values("__order")
+        ord_base = 1
+        for r in tmp.itertuples(index=False):
+            pts.append({
+                "x_label": str(getattr(r, "week_label")),
+                "order": ord_base,
+                "bankroll": float(getattr(r, "bankroll") or 0.0),
+            })
+            ord_base += 1
+
+    df = pd.DataFrame(pts)
+    domain = df.sort_values("order")["x_label"].tolist()
+
+    return (
+        alt.Chart(df, height=height)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("x_label:N", sort=domain, title=None),
+            y=alt.Y("bankroll:Q", title="Bankroll ($)"),
+            tooltip=[alt.Tooltip("x_label:N", title="Week"),
+                     alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
+        )
+        .properties(width="container")
+    )
+
+
+# ----------------------------
+# Render principal
+# ----------------------------
 def render(season: int):
     st.subheader("Overview")
 
+    # Datos base
     pnl = load_pnl_weekly(season)
-    bets_week = load_bets_this_week(season)
+    stage = season_stage(season, pnl)
+    bets_week_raw = load_bets_this_week(season) if stage == "in_season" else pd.DataFrame()
 
-    # Bets de esta semana
-    if not bets_week.empty:
-        debug = st.checkbox("Debug ESPN (Overview)", value=False)
+    # This Week’s Bets (estilo cards)
+    if not bets_week_raw.empty:
+        # Enriquecer con ESPN (scores/estado)
         try:
-            view = _enrich_bets_with_espn(bets_week, season=season, debug=debug)
-        except Exception as e:
-            st.error("Overview: fallo enriqueciendo bets con ESPN")
-            st.exception(e)
-            view = bets_week.copy()
-    else:
-        view = pd.DataFrame()
-
-    if not view.empty:
-        if "week_label" in view.columns:
-            view["week_label"] = view["week_label"].astype(str)
-            view["__order"] = view["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
-        else:
-            view["__order"] = 999
-
-        sort_cols = ["__order"]
-        if "schedule_date" in view.columns:
-            view["schedule_date"] = pd.to_datetime(view["schedule_date"], errors="coerce", utc=True)
-            sort_cols.append("schedule_date")
-        elif "start_time" in view.columns:
-            view["start_time"] = pd.to_datetime(view["start_time"], errors="coerce", utc=True)
-            sort_cols.append("start_time")
-
-        view = view.sort_values(sort_cols).drop(columns="__order", errors="ignore")
+            view = _enrich_bets_with_espn(bets_week_raw, season=season)
+        except Exception:
+            view = bets_week_raw.copy()
 
         st.markdown("**This Week’s Bets**")
 
+        # Orden visual por semana/kickoff si lo hay
+        if "week_label" in view.columns:
+            view["week_label"] = view["week_label"].astype(str)
+            view["__order"] = view["week_label"].apply(lambda s: int(s.split()[-1]) if s.startswith("Week ") and s.split()[-1].isdigit() else 999)
+            sort_cols = ["__order"]
+            if "schedule_date" in view.columns:
+                view["schedule_date"] = pd.to_datetime(view["schedule_date"], errors="coerce")
+                sort_cols.append("schedule_date")
+            view = view.sort_values(sort_cols).drop(columns="__order", errors="ignore")
+
+        # Render de tarjetas (4 por fila)
         cards = list(view.itertuples(index=False))
         idx = 0
         cols_per_row = 4
@@ -185,41 +207,32 @@ def render(season: int):
                     with col_objs[j]:
                         bet_card(pd.Series(cards[idx]._asdict()))
                     idx += 1
-
         st.divider()
 
-    # Season Overview
+    # Season overview
     st.markdown("**Season Overview**")
     if pnl.empty:
-        st.caption("No `pnl_weekly_{year}.csv` found for this season.")
+        st.caption("No `pnl.csv` found for this season.")
         return
 
-    # KPI con bankroll inicial fijo = 1000
-    profits_series = pd.to_numeric(pnl.get("profit", pd.Series([0] * len(pnl))), errors="coerce").fillna(0.0)
-    total_profit   = float(profits_series.sum())
+    # KPIs (forzamos initial=1000)
+    _, _, total_profit, total_stake, yield_pct, profits, stakes = kpis_from_pnl(pnl)
     initial_bankroll = 1000.0
-    final_bankroll   = initial_bankroll + total_profit
-    total_stake      = float(pd.to_numeric(pnl.get("stake", pd.Series([0]*len(pnl))), errors="coerce").fillna(0.0).sum())
-    yield_pct        = (total_profit / total_stake * 100.0) if total_stake > 0 else 0.0
+    final_bankroll = float(pnl["bankroll"].dropna().iloc[-1]) if "bankroll" in pnl.columns and pnl["bankroll"].notna().any() else initial_bankroll
+    delta_bankroll = final_bankroll - initial_bankroll
 
-    k1, k2, k3, k4 = st.columns(4)
+    k1, k2 = st.columns(2)
     k1.metric("Initial", f"${initial_bankroll:,.2f}")
-    k2.metric("Final",   f"${final_bankroll:,.2f}", f"{(final_bankroll-initial_bankroll):,.2f}")
-    k3.metric("Total Profit", f"${total_profit:,.2f}")
-    k4.metric("Yield",        f"{yield_pct:.2f}%")
+    k2.metric("Final", f"${final_bankroll:,.2f}", f"{delta_bankroll:,.2f}")
 
-    # Alturas de charts
-    H_BANK = 200 if not view.empty else 380
-    H_PROF = 200 if not view.empty else 380
+    # Gráficas (Bankroll con ancla 1000 + últimos profits)
+    H_BANK = 300
+    H_PROF = 300
 
-    bank_df = pd.DataFrame({
-        "week_label": pnl["week_label"].astype(str),
-        "bankroll":   initial_bankroll + profits_series.cumsum()
-    })
-    bank_df = add_week_order(bank_df).sort_values("__order")
+    bank_chart = _bankroll_chart_with_anchor(pnl, height=H_BANK)
 
     cA, cB = st.columns(2)
     with cA:
-        st.altair_chart(chart_bankroll(bank_df, height=H_BANK), use_container_width=True)
+        st.altair_chart(bank_chart, use_container_width=True)
     with cB:
-        st.altair_chart(chart_last8_profit(pnl, profits_series, last=8, height=H_PROF), use_container_width=True)
+        st.altair_chart(chart_last8_profit(pnl, profits, last=8, height=H_PROF), use_container_width=True)
