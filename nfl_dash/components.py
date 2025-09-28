@@ -4,15 +4,21 @@ from .logos import get_logo_url
 from .utils import norm_abbr, decimal_to_american
 
 
-def bet_card(row: pd.Series):
-    # Abrevs normalizadas (para logos)
-    htm = norm_abbr(row.get("home_team", "")) or norm_abbr(row.get("team", ""))
-    atm = norm_abbr(row.get("away_team", "")) or norm_abbr(row.get("opponent", ""))
-    side = str(row.get("side", "")).title() if pd.notna(row.get("side")) else ""
+def _s(val) -> str:
+    """String 'seguro': '' si es None/NaN/pd.NA, str(val) en otro caso."""
+    return "" if pd.isna(val) else str(val)
 
-    # Estado / marcador
-    state = str(row.get("state", "")).lower()
-    status_short = str(row.get("status_short", row.get("short", "")))
+
+def bet_card(row: pd.Series):
+    # Abrevs normalizadas (para logos) — ¡siempre pasar strings seguras!
+    htm = norm_abbr(_s(row.get("home_team", ""))) or norm_abbr(_s(row.get("team", "")))
+    atm = norm_abbr(_s(row.get("away_team", ""))) or norm_abbr(_s(row.get("opponent", "")))
+    side = _s(row.get("side", "")).title()
+
+    # Estado / marcador (strings seguras)
+    state = _s(row.get("state", "")).lower()
+    status_short = _s(row.get("status_short", row.get("short", "")))
+
     sh = row.get("score_home", None)
     sa = row.get("score_away", None)
     has_score = pd.notna(sh) and pd.notna(sa)
@@ -26,8 +32,8 @@ def bet_card(row: pd.Series):
         ml = decimal_to_american(dec)
 
     # Header info
-    wk = str(row.get("week_label", row.get("week", "")))
-    date_txt = str(row.get("schedule_date", ""))[:10] if pd.notna(row.get("schedule_date")) else ""
+    wk = _s(row.get("week_label", row.get("week", "")))
+    date_txt = _s(row.get("schedule_date", ""))[:10]
 
     # Colores / labels del header
     is_live  = (state == "in")
@@ -37,7 +43,6 @@ def bet_card(row: pd.Series):
         dot_color = "#F59E0B"   # amarillo
         status_label = "LIVE"
     else:
-        # final / open -> usa profit para colorizar
         if pd.isna(wl_profit):
             dot_color = "#9CA3AF"  # gris
             status_label = "OPEN"
@@ -48,10 +53,9 @@ def bet_card(row: pd.Series):
             dot_color = "#EF4444"  # rojo
             status_label = "LOSS"
         else:
-            dot_color = "#8884D8"  # morado PUSH
+            dot_color = "#8884D8"  # morado (push)
             status_label = "PUSH"
 
-    # Profit color (igual a dot para mantener semántica)
     status_color = dot_color
 
     # Logos
@@ -90,7 +94,7 @@ def bet_card(row: pd.Series):
     prof_txt  = f"${wl_profit:,.2f}" if pd.notna(wl_profit) else "—"
 
     # Pill “Pick: TEAM”
-    team_pick = norm_abbr(row.get("team", ""))
+    team_pick = norm_abbr(_s(row.get("team", "")))
     pick_badge_html = (
         f"<span class='pill pill-pick'>Pick: {team_pick}</span>" if team_pick else ""
     )
@@ -153,12 +157,12 @@ def bet_card(row: pd.Series):
 
 
 def game_card(row: pd.Series):
-    home = row.get("home_team", "")
-    away = row.get("away_team", "")
+    home = _s(row.get("home_team", ""))
+    away = _s(row.get("away_team", ""))
     hs   = row.get("home_score", None)
     as_  = row.get("away_score", None)
-    state = str(row.get("state","")).lower()
-    short = str(row.get("short",""))
+    state = _s(row.get("state","")).lower()
+    short = _s(row.get("short",""))
     start = row.get("start_time", "")
 
     live = (state == "in")
