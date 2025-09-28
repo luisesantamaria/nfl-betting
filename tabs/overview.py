@@ -13,26 +13,44 @@ from nfl_dash.live_scores import fetch_espn_scoreboard_df
 # -------------------------------------------------
 # Helpers ESPN
 # -------------------------------------------------
+def _mk_key(a: str | None, b: str | None) -> str:
+    """Llave estable para emparejar, evitando sets/frozensets (que rompen .loc)."""
+    a = (str(a or "")).upper().strip()
+    b = (str(b or "")).upper().strip()
+    return "||".join(sorted([a, b]))  # p. ej. "ARI||SEA"
+
+
 def _fetch_week_scores(season: int, week: int) -> pd.DataFrame:
     try:
         df = fetch_espn_scoreboard_df(season=season, week=int(week)).copy()
     except Exception:
         return pd.DataFrame(
             columns=[
-                "season", "week", "start_time", "state", "short",
-                "home_team", "home_score", "away_team", "away_score",
+                "season",
+                "week",
+                "start_time",
+                "state",
+                "short",
+                "home_team",
+                "home_score",
+                "away_team",
+                "away_score",
             ]
         )
 
     if df.empty:
         return df
 
+    # Normalizamos a abreviaturas propias
     df["home_abbr"] = df["home_team"].astype(str).map(norm_abbr)
     df["away_abbr"] = df["away_team"].astype(str).map(norm_abbr)
 
     if "start_time" in df.columns:
         df["start_time"] = pd.to_datetime(df["start_time"], errors="coerce", utc=True)
     df["state"] = df.get("state", pd.Series(dtype=str)).astype(str).str.lower()
+
+    # Llave estable de match
+    df["match_key"] = df.apply(lambda r: _mk_key(r.get("home_abbr"), r.get("away_abbr")), axis=1)
     return df
 
 
@@ -59,29 +77,31 @@ def _enrich_bets_with_espn(bets_df: pd.DataFrame, season: int, *, debug: bool = 
     if es.empty:
         return v
 
+    # Para debug visual
     debug_scores = es[["home_abbr", "away_abbr", "home_score", "away_score", "start_time", "state", "short"]].copy()
 
-    es["_key_set"] = es.apply(
-        lambda r: frozenset({str(r.get("home_abbr", "")), str(r.get("away_abbr", ""))}),
-        axis=1,
-    )
-    es_idx = es.set_index("_key_set")
+    # Index por match_key
+    es_idx = es.set_index("match_key")
 
+    # Columnas destino (si no existen)
     for col in ["home_team", "away_team", "home_score", "away_score", "state", "status_short", "start_time"]:
         if col not in v.columns:
             v[col] = pd.NA
 
+    # Abreviaturas normalizadas desde bets y su match_key
     v["__team_abbr"] = v.get("team", "").astype(str).map(norm_abbr)
     v["__opp_abbr"]  = v.get("opponent", "").astype(str).map(norm_abbr)
-    v["_key_set"] = v.apply(lambda r: frozenset({r["__team_abbr"], r["__opp_abbr"]}), axis=1)
+    v["match_key"]   = v.apply(lambda r: _mk_key(r["__team_abbr"], r["__opp_abbr"]), axis=1)
 
-    rows = []
+    matched_rows = []
     for i, row in v.iterrows():
-        k = row["_key_set"]
-        if k in es_idx.index:
-            srow = es_idx.loc[k]
+        key = row["match_key"]
+        if key in es_idx.index:
+            srow = es_idx.loc[key]
+            # Si hubiera duplicados, tomamos el primero
             if isinstance(srow, pd.DataFrame):
                 srow = srow.iloc[0]
+
             v.at[i, "home_team"]    = srow.get("home_abbr")
             v.at[i, "away_team"]    = srow.get("away_abbr")
             v.at[i, "home_score"]   = srow.get("home_score")
@@ -90,7 +110,7 @@ def _enrich_bets_with_espn(bets_df: pd.DataFrame, season: int, *, debug: bool = 
             v.at[i, "status_short"] = srow.get("short")
             v.at[i, "start_time"]   = srow.get("start_time")
 
-            rows.append({
+            matched_rows.append({
                 "bet_idx": i,
                 "home_abbr": srow.get("home_abbr"),
                 "away_abbr": srow.get("away_abbr"),
@@ -104,13 +124,13 @@ def _enrich_bets_with_espn(bets_df: pd.DataFrame, season: int, *, debug: bool = 
         with st.expander("Debug · ESPN matching (Overview)", expanded=False):
             st.markdown(f"**(season={season}, week={week_final}) — ESPN scoreboard**")
             st.dataframe(debug_scores, use_container_width=True)
-            if rows:
+            if matched_rows:
                 st.markdown("**Candidatos (emparejados por equipo)**")
-                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                st.dataframe(pd.DataFrame(matched_rows), use_container_width=True)
             else:
                 st.caption("No hubo emparejamientos por equipo en esta vista.")
 
-    v = v.drop(columns=["__team_abbr", "__opp_abbr", "_key_set"], errors="ignore")
+    v = v.drop(columns=["__team_abbr", "__opp_abbr"], errors="ignore")
     return v
 
 
@@ -174,6 +194,7 @@ def render(season: int):
         st.caption("No `pnl_weekly_{year}.csv` found for this season.")
         return
 
+    # KPI con bankroll inicial fijo = 1000
     profits_series = pd.to_numeric(pnl.get("profit", pd.Series([0] * len(pnl))), errors="coerce").fillna(0.0)
     total_profit   = float(profits_series.sum())
     initial_bankroll = 1000.0
