@@ -50,9 +50,9 @@ jobs:
 
       - name: Build PnL (live)
         env:
-          # Week 3 arranca con 1000 como pediste
+          # Week 3 arranca en 1000 como acordamos
           BANKROLL_INITIAL: "1000"
-          # Si tu bets.csv está en una ruta distinta, descomenta y ajusta:
+          # Si tu bets.csv está en otra ruta, descomenta y ajusta:
           # BPNL_BETS_CSV: "data/live/bets.csv"
         run: |
           set -euxo pipefail
