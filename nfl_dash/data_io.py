@@ -1,3 +1,4 @@
+# nfl_dash/data_io.py
 import pandas as pd
 import streamlit as st
 from pathlib import Path
@@ -8,6 +9,8 @@ from .paths import ARCHIVE_DIR, BETSWEEK_DIR
 from .utils import norm_abbr, american_to_decimal, season_stage
 
 ET = ZoneInfo("America/New_York")
+LIVE_DIR = Path("data/live")
+
 
 def _labor_day_et(year: int) -> datetime:
     d = datetime(year, 9, 1, tzinfo=ET)
@@ -15,10 +18,12 @@ def _labor_day_et(year: int) -> datetime:
         d += timedelta(days=1)
     return d.replace(hour=0, minute=0, second=0, microsecond=0)
 
+
 def _week1_tnf_et(year: int) -> datetime:
     labor = _labor_day_et(year)
     thu = labor + timedelta(days=3)
     return thu.replace(hour=20, minute=20)
+
 
 def _current_season_year(now_utc: datetime | None = None) -> int:
     if now_utc is None:
@@ -26,6 +31,7 @@ def _current_season_year(now_utc: datetime | None = None) -> int:
     now_et = now_utc.astimezone(ET)
     yr = now_et.year
     return yr if now_et >= _week1_tnf_et(yr) else (yr - 1)
+
 
 def list_available_seasons():
     years_from_archive = []
@@ -55,15 +61,31 @@ def list_available_seasons():
 
     return sorted(set(out))
 
-@st.cache_data
+
+@st.cache_data(ttl=60)
 def load_pnl_weekly(year: int) -> pd.DataFrame:
-    f = ARCHIVE_DIR / f"season={year}" / "pnl.csv"
-    if not f.exists():
+    """
+    Carga el PnL semanal para la temporada solicitada.
+    - Temporadas pasadas: data/archive/season=YYYY/pnl.csv
+    - Temporada actual (o si no hay archivo en archive): data/live/pnl.csv (filtrado por season)
+    """
+    f_arch = ARCHIVE_DIR / f"season={year}" / "pnl.csv"
+    f_live = LIVE_DIR / "pnl.csv"
+
+    if f_arch.exists():
+        df = pd.read_csv(f_arch)
+    elif f_live.exists():
+        df = pd.read_csv(f_live)
+        if "season" in df.columns:
+            df = df[df["season"] == year].copy()
+    else:
         return pd.DataFrame()
-    df = pd.read_csv(f)
-    for col in ("week", "profit", "stake", "bankroll"):
+
+    # Normalizaciones de tipos
+    for col in ("week", "profit", "stake", "bankroll", "yield_%"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
     if "week_label" not in df.columns:
         def _lab(n):
             try:
@@ -77,10 +99,19 @@ def load_pnl_weekly(year: int) -> pd.DataFrame:
             df["week_label"] = df["week"].apply(_lab)
         else:
             df["week_label"] = "Week 999"
+
+    if "updated_at_utc" in df.columns:
+        df["updated_at_utc"] = pd.to_datetime(df["updated_at_utc"], errors="coerce", utc=True)
+
+    if "week_order" in df.columns:
+        df = df.sort_values(["season", "week_order", "week"], kind="stable").reset_index(drop=True)
+
     return df
+
 
 def _bets_path(year: int) -> Path:
     return ARCHIVE_DIR / f"season={year}" / "bets.csv"
+
 
 @st.cache_data
 def load_ledger(year: int) -> pd.DataFrame:
@@ -110,8 +141,17 @@ def load_ledger(year: int) -> pd.DataFrame:
 
     return df
 
-@st.cache_data
+
+@st.cache_data(ttl=60)
 def load_bets_this_week(year: int) -> pd.DataFrame:
+    """
+    Carga las apuestas de la semana vigente.
+    Prioridad:
+      1) data/bets_week/season=YYYY/this_week.csv
+      2) data/bets_week/this_week.csv
+      3) Fallback para season actual: data/live/bets.csv filtrando el mayor week_order (o week)
+    """
+    # 1) y 2) - flujo existente
     candidates = [
         BETSWEEK_DIR / f"season={year}" / "this_week.csv",
         BETSWEEK_DIR / "this_week.csv",
@@ -138,4 +178,53 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
             if "schedule_date" in df.columns:
                 df["schedule_date"] = pd.to_datetime(df["schedule_date"], errors="coerce")
             return df
-    return pd.DataFrame()
+
+    # 3) Fallback - live
+    live_bets = LIVE_DIR / "bets.csv"
+    if not live_bets.exists():
+        return pd.DataFrame()
+
+    df = pd.read_csv(live_bets, low_memory=False)
+
+    # Filtra por season
+    if "season" in df.columns:
+        df["season"] = pd.to_numeric(df["season"], errors="coerce")
+        df = df[df["season"] == year].copy()
+    if df.empty:
+        return df
+
+    # Semana vigente: mayor week_order (o week)
+    if "week_order" in df.columns:
+        w = int(pd.to_numeric(df["week_order"], errors="coerce").max())
+        df = df[df["week_order"] == w].copy()
+    elif "week" in df.columns:
+        w = int(pd.to_numeric(df["week"], errors="coerce").max())
+        df = df[df["week"] == w].copy()
+
+    # Orden por kickoff si existe
+    if "schedule_date" in df.columns:
+        df["schedule_date"] = pd.to_datetime(df["schedule_date"], errors="coerce")
+        df = df.sort_values("schedule_date")
+
+    # Normaliza columnas mostradas en Overview
+    for col in ("decimal_odds", "ml", "stake", "model_prob", "edge", "ev"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    for c in ("team", "opponent"):
+        if c in df.columns:
+            df[c] = df[c].astype(str).map(norm_abbr)
+
+    # week_label si hace falta
+    if "week_label" not in df.columns and "week" in df.columns:
+        def week_label_from_num(n):
+            try:
+                n = int(n)
+            except Exception:
+                return "Week 999"
+            if 1 <= n <= 18:
+                return f"Week {n}"
+            return {19: "Wild Card", 20: "Divisional", 21: "Conference", 22: "Super Bowl"}.get(n, f"Week {n}")
+        df["week_label"] = df["week"].apply(week_label_from_num)
+
+    return df
