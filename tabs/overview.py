@@ -5,14 +5,20 @@ import streamlit as st
 import altair as alt
 
 from nfl_dash.data_io import load_pnl_weekly, load_bets_this_week
-from nfl_dash.utils import kpis_from_pnl, add_week_order, season_stage, norm_abbr, week_label_from_num
+from nfl_dash.utils import (
+    kpis_from_pnl,
+    add_week_order,
+    season_stage,
+    norm_abbr,
+    week_label_from_num,
+)
 from nfl_dash.live_scores import fetch_espn_scoreboard_df
 from nfl_dash.charts import chart_last8_profit
 from nfl_dash.components import bet_card
 
 
 # ----------------------------
-# Enriquecer bets con ESPN (scores/estado) sin debug
+# Enriquecer bets con ESPN (scores/estado)
 # ----------------------------
 def _dominant_week(bets: pd.DataFrame) -> int | None:
     if "week" in bets.columns and pd.to_numeric(bets["week"], errors="coerce").notna().any():
@@ -26,9 +32,7 @@ def _dominant_week(bets: pd.DataFrame) -> int | None:
 
 
 def _espn_index_for_week(season: int, week: int) -> dict[tuple[str, str], dict]:
-    """
-    Devuelve un diccionario {(home_abbr, away_abbr) -> fila_dict} y también (away,home) -> fila_dict
-    """
+    """ {(home_abbr, away_abbr) -> fila_dict} y también (away,home) -> fila_dict """
     try:
         es = fetch_espn_scoreboard_df(season=season, week=week)
     except Exception:
@@ -45,7 +49,7 @@ def _espn_index_for_week(season: int, week: int) -> dict[tuple[str, str], dict]:
     for r in es.to_dict("records"):
         ha, aa = r["home_abbr"], r["away_abbr"]
         idx[(ha, aa)] = r
-        idx[(aa, ha)] = r  # par invertido para emparejar por team/opponent + side
+        idx[(aa, ha)] = r
     return idx
 
 
@@ -66,9 +70,7 @@ def _enrich_bets_with_espn(bets: pd.DataFrame, season: int) -> pd.DataFrame:
     v["opponent"] = v.get("opponent", "").astype(str).map(norm_abbr)
     v["side"] = v.get("side", "").astype(str).str.lower()
 
-    # Derivar home/away desde team/opponent + side
-    home = []
-    away = []
+    home, away = [], []
     for r in v.itertuples(index=False):
         t = getattr(r, "team", "")
         o = getattr(r, "opponent", "")
@@ -78,14 +80,13 @@ def _enrich_bets_with_espn(bets: pd.DataFrame, season: int) -> pd.DataFrame:
         elif s == "away":
             home.append(o); away.append(t)
         else:
-            # No hay side claro: intentamos adivinar con el índice
             if (t, o) in idx:
-                ha = t if idx[(t, o)]["home_abbr"] == t else o
-                aa = o if ha == t else t
+                ha = idx[(t, o)]["home_abbr"]
+                aa = idx[(t, o)]["away_abbr"]
                 home.append(ha); away.append(aa)
             elif (o, t) in idx:
-                ha = o if idx[(o, t)]["home_abbr"] == o else t
-                aa = t if ha == o else o
+                ha = idx[(o, t)]["home_abbr"]
+                aa = idx[(o, t)]["away_abbr"]
                 home.append(ha); away.append(aa)
             else:
                 home.append(t); away.append(o)
@@ -93,14 +94,7 @@ def _enrich_bets_with_espn(bets: pd.DataFrame, season: int) -> pd.DataFrame:
     v["home_team"] = home
     v["away_team"] = away
 
-    # Rellenar scores/estado si existe match en ESPN
-    add_cols = {
-        "home_score": [],
-        "away_score": [],
-        "state": [],
-        "status_short": [],
-        "start_time": [],
-    }
+    add_cols = { "home_score": [], "away_score": [], "state": [], "status_short": [], "start_time": [] }
     for r in v.itertuples(index=False):
         key = (getattr(r, "home_team"), getattr(r, "away_team"))
         srow = idx.get(key)
@@ -116,7 +110,6 @@ def _enrich_bets_with_espn(bets: pd.DataFrame, season: int) -> pd.DataFrame:
     for k, vals in add_cols.items():
         v[k] = vals
 
-    # Tipos
     if "start_time" in v.columns:
         v["start_time"] = pd.to_datetime(v["start_time"], errors="coerce", utc=True)
     for c in ("home_score", "away_score"):
@@ -127,38 +120,41 @@ def _enrich_bets_with_espn(bets: pd.DataFrame, season: int) -> pd.DataFrame:
 
 
 # ----------------------------
-# Bankroll chart con ancla 1000 al inicio
+# Bankroll chart "pegado" al eje Y (sin punto artificial)
 # ----------------------------
-def _bankroll_chart_with_anchor(pnl: pd.DataFrame, height: int = 220):
+def _bankroll_chart_snug(pnl: pd.DataFrame, height: int = 220) -> alt.Chart:
     """
-    Construye un dataframe con un punto 'Start' = 1000 y luego (Week N, bankroll) en orden.
+    - Sin punto 'Start': primera semana queda pegada al eje Y
+    - Y no empieza en 0: dominio ajustado (con pequeño pad)
+    - X sin padding: paddingInner=0 y paddingOuter=0
     """
-    pts = []
-    pts.append({"x_label": "Start", "order": 0, "bankroll": 1000.0})
+    if pnl.empty or "bankroll" not in pnl.columns:
+        return alt.Chart(pd.DataFrame({"x": [], "bankroll": []}), height=height).mark_line().encode(
+            x=alt.X("x:N", title=None, scale=alt.Scale(paddingInner=0, paddingOuter=0)),
+            y=alt.Y("bankroll:Q", title="Bankroll ($)"),
+        )
 
-    if not pnl.empty and "bankroll" in pnl.columns:
-        tmp = add_week_order(pnl[["week_label", "bankroll"]].copy())
-        tmp = tmp.sort_values("__order")
-        ord_base = 1
-        for r in tmp.itertuples(index=False):
-            pts.append({
-                "x_label": str(getattr(r, "week_label")),
-                "order": ord_base,
-                "bankroll": float(getattr(r, "bankroll") or 0.0),
-            })
-            ord_base += 1
+    df = add_week_order(pnl[["week_label", "bankroll"]].copy())
+    df = df.sort_values("__order")
+    df["week_label"] = df["week_label"].astype(str)
 
-    df = pd.DataFrame(pts)
-    domain = df.sort_values("order")["x_label"].tolist()
+    domain = df["week_label"].tolist()
+
+    vals = pd.to_numeric(df["bankroll"], errors="coerce").dropna()
+    if len(vals):
+        vmin, vmax = float(vals.min()), float(vals.max())
+        pad = max(1.0, 0.01 * max(vmax - vmin, 1.0))
+        y_scale = alt.Scale(domain=[vmin - pad, vmax + pad], nice=False)
+    else:
+        y_scale = alt.Scale(nice=True)
 
     return (
         alt.Chart(df, height=height)
         .mark_line(point=True)
         .encode(
-            x=alt.X("x_label:N", sort=domain, title=None),
-            y=alt.Y("bankroll:Q", title="Bankroll ($)"),
-            tooltip=[alt.Tooltip("x_label:N", title="Week"),
-                     alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
+            x=alt.X("week_label:N", sort=domain, title=None, scale=alt.Scale(paddingInner=0, paddingOuter=0)),
+            y=alt.Y("bankroll:Q", title="Bankroll ($)", scale=y_scale),
+            tooltip=["week_label:N", alt.Tooltip("bankroll:Q", format="$.2f")],
         )
         .properties(width="container")
     )
@@ -175,9 +171,8 @@ def render(season: int):
     stage = season_stage(season, pnl)
     bets_week_raw = load_bets_this_week(season) if stage == "in_season" else pd.DataFrame()
 
-    # This Week’s Bets (estilo cards)
+    # This Week’s Bets
     if not bets_week_raw.empty:
-        # Enriquecer con ESPN (scores/estado)
         try:
             view = _enrich_bets_with_espn(bets_week_raw, season=season)
         except Exception:
@@ -185,17 +180,17 @@ def render(season: int):
 
         st.markdown("**This Week’s Bets**")
 
-        # Orden visual por semana/kickoff si lo hay
         if "week_label" in view.columns:
             view["week_label"] = view["week_label"].astype(str)
-            view["__order"] = view["week_label"].apply(lambda s: int(s.split()[-1]) if s.startswith("Week ") and s.split()[-1].isdigit() else 999)
+            view["__order"] = view["week_label"].apply(
+                lambda s: int(s.split()[-1]) if s.startswith("Week ") and s.split()[-1].isdigit() else 999
+            )
             sort_cols = ["__order"]
             if "schedule_date" in view.columns:
                 view["schedule_date"] = pd.to_datetime(view["schedule_date"], errors="coerce")
                 sort_cols.append("schedule_date")
             view = view.sort_values(sort_cols).drop(columns="__order", errors="ignore")
 
-        # Render de tarjetas (4 por fila)
         cards = list(view.itertuples(index=False))
         idx = 0
         cols_per_row = 4
@@ -215,7 +210,7 @@ def render(season: int):
         st.caption("No `pnl.csv` found for this season.")
         return
 
-    # KPIs (forzamos initial=1000)
+    # KPIs (Initial fijo en 1000)
     _, _, total_profit, total_stake, yield_pct, profits, stakes = kpis_from_pnl(pnl)
     initial_bankroll = 1000.0
     final_bankroll = float(pnl["bankroll"].dropna().iloc[-1]) if "bankroll" in pnl.columns and pnl["bankroll"].notna().any() else initial_bankroll
@@ -225,11 +220,11 @@ def render(season: int):
     k1.metric("Initial", f"${initial_bankroll:,.2f}")
     k2.metric("Final", f"${final_bankroll:,.2f}", f"{delta_bankroll:,.2f}")
 
-    # Gráficas (Bankroll con ancla 1000 + últimos profits)
+    # Charts
     H_BANK = 300
     H_PROF = 300
 
-    bank_chart = _bankroll_chart_with_anchor(pnl, height=H_BANK)
+    bank_chart = _bankroll_chart_snug(pnl, height=H_BANK)
 
     cA, cB = st.columns(2)
     with cA:
