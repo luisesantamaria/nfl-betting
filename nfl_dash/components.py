@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from streamlit.components.v1 import html as st_html
 from .logos import get_logo_url
 from .utils import norm_abbr, decimal_to_american
 
@@ -23,16 +24,8 @@ def _f(x):
     except Exception:
         return None
 
-def _is_pos(x) -> bool:
-    v = _f(x)
-    return (v is not None) and (v > 0)
-
-def _is_neg(x) -> bool:
-    v = _f(x)
-    return (v is not None) and (v < 0)
-
 # ----------------------------
-# Bet Card
+# Bet Card (con HTML en iframe)
 # ----------------------------
 def bet_card(row: pd.Series):
     # Equipos (preferimos home/away si vienen de ESPN, si no, team/opponent)
@@ -59,7 +52,7 @@ def bet_card(row: pd.Series):
     live  = state == "in"
     final = state == "post"
 
-    # Status color y label (si está LIVE, domina el color amarillo)
+    # Status color y label (LIVE domina en amarillo)
     if live:
         status_color, status_label = "#F59E0B", "LIVE"
     else:
@@ -86,7 +79,7 @@ def bet_card(row: pd.Series):
         team_abbr = _s(team_abbr)
         url = get_logo_url(team_abbr) if team_abbr else None
         if url:
-            return f"<img src='{url}' width='{size}' height='{size}' style='object-fit:contain;'/>"
+            return f"<img src='{url}' alt='{team_abbr}' width='{size}' height='{size}' style='object-fit:contain;'/>"
         t = (team_abbr or 'NA')[:3]
         return (
             f"<div style='width:{size}px;height:{size}px;border-radius:50%;"
@@ -97,11 +90,11 @@ def bet_card(row: pd.Series):
     left_logo  = logo_tag(htm, "#1f2937", 44)
     right_logo = logo_tag(atm, "#374151", 44)
 
+    # Marcador + línea con estado corto
     score_html = (
         f"<div style='font-weight:900;font-size:26px;letter-spacing:.5px;'>{int(sh)} — {int(sa)}</div>"
         if has_score else "<div style='opacity:.55;font-weight:700;'>TBD</div>"
     )
-    # Línea debajo del score: short (minuto/quarter/OT) cuando aplica
     sub_status_html = ""
     if live and short:
         sub_status_html = f"<div style='font-size:12px; opacity:.8; margin-top:2px;'>{short}</div>"
@@ -109,20 +102,22 @@ def bet_card(row: pd.Series):
         sub_status_html = f"<div style='font-size:12px; opacity:.6; margin-top:2px;'>{short}</div>"
 
     # Subtítulos bajo logos
-    subline_left  = f"{htm}{(' • '+side.title()) if side else ''}".strip()
+    side_pretty = side.title() if side else ""
+    subline_left  = f"{htm}{(' • '+side_pretty) if side_pretty else ''}".strip()
     subline_right = f"{atm}".strip()
 
-    # Textos
+    # Textos métricas (Profit sólo visible si es FINAL)
     ml_txt    = f"{ml:+.0f}" if ml is not None else "—"
     stake_txt = f"${stake:,.2f}" if stake is not None else "—"
-    prof_txt  = f"${profit:,.2f}" if profit is not None else "—"
+    prof_txt  = f"${profit:,.2f}" if (final and profit is not None) else "—"
     pick_txt  = f"Pick: {pick}" if pick else ""
 
-    st.markdown(f"""
+    # HTML total (usamos st.components.v1.html para evitar glitches de markdown)
+    card_html = f"""
     <div style="
-        border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px;margin-bottom:10px;
+        border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px;margin-bottom:10px;
         background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.00));
-        font-size:12.5px;
+        font-size:12.5px; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji;
     ">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div style="display:flex; align-items:center; gap:8px;">
@@ -159,7 +154,10 @@ def bet_card(row: pd.Series):
         <div><span style="opacity:.6;">Profit:</span> <strong style="color:{status_color};">{prof_txt}</strong></div>
       </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+
+    # Altura auto: 220 aprox funciona bien; puedes ajustar si quieres
+    st_html(card_html, height=220)
 
 # ----------------------------
 # Game Card (tab Live)
@@ -171,7 +169,7 @@ def game_card(row: pd.Series):
     as_  = row.get("away_score", None)
     state = _s(row.get("state")).lower()
     short = _s(row.get("short"))
-    start = _s(row.get("start_time"))
+    # start = _s(row.get("start_time"))  # no se muestra
 
     live  = (state == "in")
     final = (state == "post")
@@ -189,7 +187,7 @@ def game_card(row: pd.Series):
         name = _s(name)
         url = get_logo_url(name) if name else None
         if url:
-            return f"<img src='{url}' width='{size}' height='{size}' style='object-fit:contain;'/>"
+            return f"<img src='{url}' alt='{name}' width='{size}' height='{size}' style='object-fit:contain;'/>"
         t = (name or 'NA')[:3]
         return (
             f"<div style='width:{size}px;height:{size}px;border-radius:50%;"
@@ -206,11 +204,11 @@ def game_card(row: pd.Series):
         if has_score else "<div style='opacity:.55;font-weight:700;'>—</div>"
     )
 
-    st.markdown(f"""
+    card_html = f"""
     <div style="
-        border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:14px; margin-bottom:12px;
+        border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:14px; margin-bottom:12px;
         background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.00));
-        font-size:13px;
+        font-size:13px; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji;
     ">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div style="display:flex; align-items:center; gap:8px;">
@@ -236,4 +234,5 @@ def game_card(row: pd.Series):
         <div style="font-size:12px; opacity:.7; font-weight:600;">{short}</div>
       </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    st_html(card_html, height=230)
