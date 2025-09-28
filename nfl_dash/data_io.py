@@ -1,4 +1,5 @@
 # nfl_dash/data_io.py
+import numpy as np
 import pandas as pd
 import streamlit as st
 from pathlib import Path
@@ -145,11 +146,15 @@ def load_ledger(year: int) -> pd.DataFrame:
 @st.cache_data(ttl=60)
 def load_bets_this_week(year: int) -> pd.DataFrame:
     """
-    Carga las apuestas de la semana vigente.
+    Carga las apuestas de la semana vigente para mostrar en Overview.
     Prioridad:
       1) data/bets_week/season=YYYY/this_week.csv
       2) data/bets_week/this_week.csv
-      3) Fallback para season actual: data/live/bets.csv filtrando el mayor week_order (o week)
+      3) Fallback para season actual: data/live/bets.csv (semana más reciente)
+
+    En el fallback, garantiza columnas de marcador:
+      - home_score/away_score (mapeando desde score_home/score_away si es necesario)
+      - team_score/opponent_score (derivadas si hace falta)
     """
     # 1) y 2) - flujo existente
     candidates = [
@@ -159,9 +164,13 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
     for p in candidates:
         if p.exists():
             df = pd.read_csv(p, low_memory=False)
-            for col in ("decimal_odds", "ml", "stake", "model_prob", "edge", "ev"):
+
+            # Normaliza numéricos
+            for col in ("decimal_odds", "ml", "stake", "model_prob", "edge", "ev", "profit"):
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
+
+            # week_label si falta
             if "week_label" not in df.columns and "week" in df.columns:
                 def week_label_from_num(n):
                     try:
@@ -172,14 +181,24 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
                         return f"Week {n}"
                     return {19: "Wild Card", 20: "Divisional", 21: "Conference", 22: "Super Bowl"}.get(n, f"Week {n}")
                 df["week_label"] = df["week"].apply(week_label_from_num)
+
+            # normaliza equipos
             for c in ("team", "opponent"):
                 if c in df.columns:
                     df[c] = df[c].astype(str).map(norm_abbr)
+
             if "schedule_date" in df.columns:
                 df["schedule_date"] = pd.to_datetime(df["schedule_date"], errors="coerce")
+
+            # Si vienen como score_home/score_away, mapea a home_score/away_score
+            if {"home_score", "away_score"}.issubset(df.columns) is False and \
+               {"score_home", "score_away"}.issubset(df.columns):
+                df["home_score"] = pd.to_numeric(df["score_home"], errors="coerce")
+                df["away_score"] = pd.to_numeric(df["score_away"], errors="coerce")
+
             return df
 
-    # 3) Fallback - live
+    # 3) Fallback - lee data/live/bets.csv
     live_bets = LIVE_DIR / "bets.csv"
     if not live_bets.exists():
         return pd.DataFrame()
@@ -193,7 +212,7 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # Semana vigente: mayor week_order (o week)
+    # Semana vigente: mayor week_order (si existe) o mayor week
     if "week_order" in df.columns:
         w = int(pd.to_numeric(df["week_order"], errors="coerce").max())
         df = df[df["week_order"] == w].copy()
@@ -206,12 +225,13 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
         df["schedule_date"] = pd.to_datetime(df["schedule_date"], errors="coerce")
         df = df.sort_values("schedule_date")
 
-    # Normaliza columnas mostradas en Overview
-    for col in ("decimal_odds", "ml", "stake", "model_prob", "edge", "ev"):
+    # Normaliza numéricos mostrados
+    for col in ("decimal_odds", "ml", "stake", "model_prob", "edge", "ev", "profit"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    for c in ("team", "opponent"):
+    # Normaliza equipos
+    for c in ("team", "opponent", "home_team", "away_team"):
         if c in df.columns:
             df[c] = df[c].astype(str).map(norm_abbr)
 
@@ -226,5 +246,32 @@ def load_bets_this_week(year: int) -> pd.DataFrame:
                 return f"Week {n}"
             return {19: "Wild Card", 20: "Divisional", 21: "Conference", 22: "Super Bowl"}.get(n, f"Week {n}")
         df["week_label"] = df["week"].apply(week_label_from_num)
+
+    # ---------- Garantizar columnas de marcador que usan las tarjetas ----------
+    # 1) home_score/away_score desde score_home/score_away si no existen
+    if {"home_score", "away_score"}.issubset(df.columns) is False:
+        if {"score_home", "score_away"}.issubset(df.columns):
+            df["home_score"] = pd.to_numeric(df["score_home"], errors="coerce")
+            df["away_score"] = pd.to_numeric(df["score_away"], errors="coerce")
+        else:
+            # Si no existen, las creamos (NaN) para que el componente no truene
+            if "home_score" not in df.columns:
+                df["home_score"] = np.nan
+            if "away_score" not in df.columns:
+                df["away_score"] = np.nan
+
+    # 2) team_score/opponent_score si falta (derivadas de home/away cuando podamos)
+    if {"team_score", "opponent_score"}.issubset(df.columns) is False:
+        can_map = {"team", "home_team", "away_team"}.issubset(df.columns)
+        if can_map:
+            is_team_home = (df["team"] == df["home_team"])
+            df["team_score"] = np.where(is_team_home, df["home_score"], df["away_score"])
+            df["opponent_score"] = np.where(is_team_home, df["away_score"], df["home_score"])
+        else:
+            # al menos crea columnas vacías para que el render no falle
+            if "team_score" not in df.columns:
+                df["team_score"] = np.nan
+            if "opponent_score" not in df.columns:
+                df["opponent_score"] = np.nan
 
     return df
