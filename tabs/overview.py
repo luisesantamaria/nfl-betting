@@ -119,29 +119,35 @@ def _enrich_bets_with_espn(bets: pd.DataFrame, season: int) -> pd.DataFrame:
 
 
 # ----------------------------
-# Bankroll chart pegado al eje Y (sin punto artificial)
+# Bankroll chart pegado al eje Y y arrancando en 1000
 # ----------------------------
 def _bankroll_chart_snug(pnl: pd.DataFrame, height: int = 220) -> alt.Chart:
     """
     - Eje X cuantitativo 0..N-1 -> primer punto x=0 cae sobre el eje Y.
-    - Etiquetas de X con labelExpr para mostrar "Week n".
-    - Eje Y con dominio ajustado (no arranca en 0) y pad pequeño.
+    - Se inserta un punto inicial (x=0, y=1000) y se oculta su etiqueta (queda vacío).
+    - Las etiquetas visibles empiezan en Week 3, Week 4, ...
+    - Eje Y con dominio ajustado (no arranca en 0) y pad mínimo.
     """
-    if pnl.empty or "bankroll" not in pnl.columns:
-        return alt.Chart(pd.DataFrame({"idx": [], "bankroll": []}), height=height).mark_line().encode(
-            x=alt.X("idx:Q", title=None, scale=alt.Scale(nice=False, zero=False)),
-            y=alt.Y("bankroll:Q", title="Bankroll ($)"),
-        )
+    # Base sin estar vacía
+    core = add_week_order(pnl[["week_label", "bankroll"]].copy()) if (not pnl.empty and "bankroll" in pnl.columns) else pd.DataFrame(columns=["week_label", "bankroll", "__order"])
+    if core.empty:
+        base = pd.DataFrame({"week_label": [], "bankroll": [], "__order": []})
+    else:
+        core = core.sort_values("__order")
+        base = core[["week_label", "bankroll"]].copy()
 
-    df = add_week_order(pnl[["week_label", "bankroll"]].copy())
-    df = df.sort_values("__order").reset_index(drop=True)
-    df["week_label"] = df["week_label"].astype(str)
-    df["idx"] = df.index  # 0..N-1
+    # Insertar punto inicial 1000
+    init_row = pd.DataFrame({"week_label": ["Initial"], "bankroll": [1000.0]})
+    df = pd.concat([init_row, base], ignore_index=True)
+    df["idx"] = range(len(df))  # 0..N-1
 
-    labels = df["week_label"].tolist()
+    # Etiquetas: ocultar la de idx 0 (punto Initial)
+    labels = [""] + base["week_label"].astype(str).tolist()
     n = len(labels)
-    label_expr = "[" + ",".join([f"'{s}'" for s in labels]) + "][datum.value]"
+    label_array = "[" + ",".join([f"'{s}'" for s in labels]) + "]"
+    label_expr = f"datum.value === 0 ? '' : {label_array}[datum.value]"
 
+    # Y-scale ajustado al rango real
     vals = pd.to_numeric(df["bankroll"], errors="coerce").dropna()
     if len(vals):
         vmin, vmax = float(vals.min()), float(vals.max())
@@ -158,10 +164,10 @@ def _bankroll_chart_snug(pnl: pd.DataFrame, height: int = 220) -> alt.Chart:
                 "idx:Q",
                 title=None,
                 scale=alt.Scale(domain=[0, max(0, n - 1)], nice=False, zero=False),
-                axis=alt.Axis(values=list(range(n)), labelExpr=label_expr)
+                axis=alt.Axis(values=list(range(n)), labelExpr=label_expr),
             ),
             y=alt.Y("bankroll:Q", title="Bankroll ($)", scale=y_scale),
-            tooltip=[alt.Tooltip("week_label:N", title="Week"), alt.Tooltip("bankroll:Q", format="$.2f")],
+            tooltip=[alt.Tooltip("bankroll:Q", format="$.2f")],
         )
         .properties(width="container")
     )
@@ -178,7 +184,7 @@ def render(season: int):
     stage = season_stage(season, pnl)
     bets_week_raw = load_bets_this_week(season) if stage == "in_season" else pd.DataFrame()
 
-    # This Week’s Bets
+    # This Week’s Bets (cards con score/estado)
     if not bets_week_raw.empty:
         try:
             view = _enrich_bets_with_espn(bets_week_raw, season=season)
