@@ -13,13 +13,20 @@ from nfl_dash.charts import chart_sparkline_cumprofit, chart_last8_profit
 from nfl_dash.live_scores import fetch_espn_scoreboard_df
 
 
+# =========================
+# ESPN helpers
+# =========================
 def _espn_scores_for_week(season: int, week: int) -> pd.DataFrame:
-    """Trae scoreboard ESPN y lo normaliza a abrevs con norm_abbr (sin mapas manuales)."""
+    """
+    Trae scoreboard ESPN para (season, week) y normaliza a abrevs con norm_abbr.
+    Devuelve columnas: home_abbr, away_abbr, home_score, away_score, start_time, state
+    """
     sb = fetch_espn_scoreboard_df(season=int(season), week=int(week))
     if sb.empty:
         return pd.DataFrame(columns=[
-            "home_abbr","away_abbr","home_score","away_score","start_time","state"
+            "home_abbr", "away_abbr", "home_score", "away_score", "start_time", "state"
         ])
+
     out = sb.copy()
     out["home_abbr"]  = out["home_team"].astype(str).map(norm_abbr)
     out["away_abbr"]  = out["away_team"].astype(str).map(norm_abbr)
@@ -30,7 +37,14 @@ def _espn_scores_for_week(season: int, week: int) -> pd.DataFrame:
 
 
 def _enrich_bets_with_espn(view: pd.DataFrame, debug: bool=False) -> pd.DataFrame:
-    """Inyecta marcadores (live/final) en las bets usando solo ESPN."""
+    """
+    Inyecta marcadores (live/final) en las bets usando el scoreboard de ESPN.
+    Escribe TODAS las variantes que las cards pueden usar:
+      - score_home / score_away
+      - home_score / away_score (alias)
+      - home_team / away_team
+      - team_score / opponent_score
+    """
     if view.empty:
         return view
 
@@ -48,7 +62,7 @@ def _enrich_bets_with_espn(view: pd.DataFrame, debug: bool=False) -> pd.DataFram
         if c in v.columns:
             v[c] = v[c].astype(str).map(norm_abbr)
 
-    # Asegurar TODAS las columnas que pueden usar las cards
+    # Asegurar columnas objetivo que puede usar el componente
     for col in ("score_home","score_away","home_score","away_score",
                 "team_score","opponent_score","home_team","away_team"):
         if col not in v.columns:
@@ -61,7 +75,6 @@ def _enrich_bets_with_espn(view: pd.DataFrame, debug: bool=False) -> pd.DataFram
     v = v.reset_index(drop=True)
     v["bet_idx"] = v.index
 
-    # Debug UI
     dbg_container = st.expander("Debug · ESPN matching (Overview)", expanded=False) if debug else None
 
     for (ssn, wk), idxs in v.groupby(grp_cols).groups.items():
@@ -79,8 +92,10 @@ def _enrich_bets_with_espn(view: pd.DataFrame, debug: bool=False) -> pd.DataFram
 
         sub = v.loc[idxs].copy()
 
-        # Emparejar por par de equipos (sin importar local/visitante)
-        cand = sub.merge(sb, how="cross")
+        # ⚠️ Sufijos explícitos para evitar KeyError por _x/_y
+        cand = sub.merge(sb, how="cross", suffixes=("_bet", "_sb"))
+
+        # Emparejar por par de equipos sin importar local/visitante
         same_pair = (
             ((cand["team"] == cand["home_abbr"]) & (cand["opponent"] == cand["away_abbr"])) |
             ((cand["team"] == cand["away_abbr"]) & (cand["opponent"] == cand["home_abbr"]))
@@ -105,36 +120,43 @@ def _enrich_bets_with_espn(view: pd.DataFrame, debug: bool=False) -> pd.DataFram
         pick = (cand.sort_values(["bet_idx","abs_diff"])
                     .groupby("bet_idx", as_index=False).first())
 
-        # Escribir TODO en la bet (usando .loc para evitar problemas de dtype)
+        # Escribir TODO en la bet (lee SIEMPRE de columnas con sufijo _sb)
         for _, row in pick.iterrows():
             i = int(row["bet_idx"])
 
             v.loc[i, "home_team"] = row["home_abbr"]
             v.loc[i, "away_team"] = row["away_abbr"]
 
-            v.loc[i, "score_home"] = row["home_score"]
-            v.loc[i, "score_away"] = row["away_score"]
-            v.loc[i, "home_score"]  = row["home_score"]
-            v.loc[i, "away_score"]  = row["away_score"]
+            hs = row["home_score_sb"]
+            aw = row["away_score_sb"]
+
+            v.loc[i, "score_home"] = hs
+            v.loc[i, "score_away"] = aw
+            v.loc[i, "home_score"]  = hs
+            v.loc[i, "away_score"]  = aw
 
             is_team_home = (v.loc[i, "team"] == row["home_abbr"])
-            v.loc[i, "team_score"]     = row["home_score"] if is_team_home else row["away_score"]
-            v.loc[i, "opponent_score"] = row["away_score"] if is_team_home else row["home_score"]
+            v.loc[i, "team_score"]     = hs if is_team_home else aw
+            v.loc[i, "opponent_score"] = aw if is_team_home else hs
 
     return v.drop(columns=["bet_idx"], errors="ignore")
 
 
+# =========================
+# Render principal
+# =========================
 def render(season: int):
     st.subheader("Overview")
 
-    # Toggle de debug (manténlo apagado normalmente)
+    # Toggle de debug (útil mientras ajustamos empates)
     debug = st.checkbox("Debug ESPN matching (Overview)", value=False)
 
+    # Datos base
     pnl = load_pnl_weekly(season)
     stage = season_stage(season, pnl)
-
-    # ---------- Bets de esta semana (scores vía ESPN) ----------
     bets_week = load_bets_this_week(season) if stage == "in_season" else pd.DataFrame()
+
+    # Bets de esta semana (scores vía ESPN)
     if not bets_week.empty:
         st.markdown("**This Week’s Bets**")
 
@@ -143,9 +165,9 @@ def render(season: int):
             view = _enrich_bets_with_espn(view, debug=debug)
         except Exception as e:
             st.error("Overview: fallo enriqueciendo bets con ESPN")
-            st.exception(e)  # <-- ahora sí verás el stack real y línea exacta
-            # Seguimos sin scores
-        # Orden y tipos mínimos para las cards
+            st.exception(e)
+
+        # Tipos mínimos para las cards
         for c in ("score_home","score_away","home_score","away_score",
                   "team_score","opponent_score","profit","stake","decimal_odds"):
             if c in view.columns:
@@ -162,6 +184,7 @@ def render(season: int):
                 sort_cols.append("schedule_date")
             view = view.sort_values(sort_cols).drop(columns="__order", errors="ignore")
 
+        # Render cards (igual que en la pestaña Bets)
         from nfl_dash.components import bet_card as render_bet_card
         cards = list(view.itertuples(index=False))
         idx = 0
@@ -177,7 +200,7 @@ def render(season: int):
 
         st.divider()
 
-    # ---------- Season Overview ----------
+    # Overview de temporada
     st.markdown("**Season Overview**")
     if pnl.empty:
         st.caption("No `pnl.csv` found for this season.")
@@ -191,8 +214,10 @@ def render(season: int):
     k3.metric("Total Profit", f"${total_profit:,.2f}")
     k4.metric("Yield",        f"{yield_pct:.2f}%")
 
+    # Alturas dinámicas: si NO hay bets arriba, agrandamos ambos charts
     H_BANK, H_PROF = (380, 380) if bets_week.empty else (200, 200)
 
+    # Cumulative profit
     cum_df = add_week_order(pd.DataFrame({
         "week_label": pnl["week_label"].astype(str),
         "cum_profit": profits.cumsum()
