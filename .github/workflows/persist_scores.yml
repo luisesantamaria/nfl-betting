@@ -3,16 +3,25 @@ name: persist-scores
 on:
   workflow_dispatch: {}
   schedule:
-    # TNF late window (cada 5 min 9-11:59 PM ET Thu)
-    - cron: "*/5 1-4 * * 5"
-    # Domingos 1 PM ET ventana
-    - cron: "*/5 17-19 * * 0"
-    # Domingos 4:05/4:25 PM ET ventana
-    - cron: "*/5 21-23 * * 0"
-    # SNF
-    - cron: "*/5 1-3 * * 1"
-    # MNF
-    - cron: "*/5 1-4 * * 2"
+    # TNF (Thursday Night Football)
+    # Viernes 00–06 UTC  ≈ Jueves 8:00 PM–2:00 AM ET
+    - cron: "*/5 0-6 * * 5"
+
+    # Juegos internacionales del domingo (ej. London/Frankfurt)
+    # Domingo 13–16 UTC ≈ 9:00 AM–12:00 PM ET
+    - cron: "*/5 13-16 * * 0"
+
+    # Ventanas del domingo SIN huecos (1 PM y 4:05/4:25 PM ET)
+    # Domingo 17–23 UTC ≈ 1:00 PM–7:59 PM ET
+    - cron: "*/5 17-23 * * 0"
+
+    # SNF (Sunday Night Football) + buffer de OT/retrasos
+    # Lunes 00–05 UTC ≈ Domingo 8:00 PM–12:59 AM ET
+    - cron: "*/5 0-5 * * 1"
+
+    # MNF (Monday Night Football) + buffer
+    # Martes 00–06 UTC ≈ Lunes 8:00 PM–1:59 AM ET
+    - cron: "*/5 0-6 * * 2"
 
 jobs:
   persist:
