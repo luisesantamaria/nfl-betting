@@ -5,15 +5,19 @@ import pandas as pd
 import streamlit as st
 
 from nfl_dash.data_io import load_pnl_weekly, load_bets_this_week
-from nfl_dash.utils import kpis_from_pnl, add_week_order, season_stage, ORDER_INDEX, norm_abbr
+from nfl_dash.utils import (
+    kpis_from_pnl, add_week_order, season_stage,
+    ORDER_INDEX, norm_abbr
+)
 from nfl_dash.charts import chart_sparkline_cumprofit, chart_last8_profit
 from nfl_dash.live_scores import fetch_espn_scoreboard_df
 
 
 def _espn_scores_for_week(season: int, week: int) -> pd.DataFrame:
     """
+    Igual que Live: trae el scoreboard de ESPN para esa (season, week)
+    y lo normaliza a abrevs con norm_abbr.
     Devuelve: home_abbr, away_abbr, home_score, away_score, start_time, state
-    (se obtienen de ESPN y se normalizan a abrevs con norm_abbr, sin mapas manuales).
     """
     sb = fetch_espn_scoreboard_df(season=int(season), week=int(week))
     if sb.empty:
@@ -30,8 +34,15 @@ def _espn_scores_for_week(season: int, week: int) -> pd.DataFrame:
     return out[["home_abbr","away_abbr","home_score","away_score","start_time","state"]]
 
 
-def _enrich_bets_with_espn(view: pd.DataFrame) -> pd.DataFrame:
-    """Inyecta marcadores (live/final) en las bets usando solo ESPN."""
+def _enrich_bets_with_espn(view: pd.DataFrame, debug: bool=False) -> pd.DataFrame:
+    """
+    Inyecta marcadores (live/final) en las bets usando solo ESPN.
+    IMPORTANTe: escribe todas las variantes de columnas que el componente puede usar:
+      - score_home / score_away
+      - home_score / away_score (alias)
+      - home_team / away_team
+      - team_score / opponent_score
+    """
     if view.empty:
         return view
 
@@ -44,27 +55,36 @@ def _enrich_bets_with_espn(view: pd.DataFrame) -> pd.DataFrame:
         if c in v.columns:
             v[c] = pd.to_numeric(v[c], errors="coerce")
 
-    # Asegurar abrevs consistentes en bets (por si vinieran raras)
+    # Asegurar abrevs consistentes en bets
     for c in ("team","opponent"):
         if c in v.columns:
             v[c] = v[c].astype(str).map(norm_abbr)
 
-    # Inicializa columnas de score que usan las cards
-    v["home_score"] = pd.to_numeric(v.get("home_score", np.nan), errors="coerce")
-    v["away_score"] = pd.to_numeric(v.get("away_score", np.nan), errors="coerce")
-    v["team_score"] = pd.to_numeric(v.get("team_score", np.nan), errors="coerce")
-    v["opponent_score"] = pd.to_numeric(v.get("opponent_score", np.nan), errors="coerce")
+    # Inicializa columnas esperadas por la card
+    for col in ("score_home","score_away","home_score","away_score",
+                "team_score","opponent_score","home_team","away_team"):
+        if col not in v.columns:
+            v[col] = np.nan
 
     grp_cols = [c for c in ("season","week") if c in v.columns]
     if not grp_cols:
         return v
 
     v = v.reset_index().rename(columns={"index": "bet_idx"})
+
+    # Debug UI
+    dbg_container = st.expander("Debug · ESPN matching (Overview)", expanded=False) if debug else None
+
     for (ssn, wk), idxs in v.groupby(grp_cols).groups.items():
         if pd.isna(ssn) or pd.isna(wk):
             continue
 
         sb = _espn_scores_for_week(int(ssn), int(wk))
+        if debug and dbg_container is not None:
+            with dbg_container:
+                st.markdown(f"**(season={int(ssn)}, week={int(wk)}) — ESPN scoreboard**")
+                st.dataframe(sb, use_container_width=True)
+
         if sb.empty:
             continue
 
@@ -77,10 +97,15 @@ def _enrich_bets_with_espn(view: pd.DataFrame) -> pd.DataFrame:
             ((cand["team"] == cand["away_abbr"]) & (cand["opponent"] == cand["home_abbr"]))
         )
         cand = cand.loc[same_pair].copy()
+        if debug and dbg_container is not None:
+            with dbg_container:
+                st.markdown("**Candidatos (emparejados por equipo)**")
+                st.dataframe(cand, use_container_width=True)
+
         if cand.empty:
             continue
 
-        # Tomar el kickoff más cercano a schedule_date (si existe)
+        # Kickoff más cercano a schedule_date
         if "schedule_date" in cand.columns:
             sd = pd.to_datetime(cand["schedule_date"], errors="coerce", utc=True)
             cand["abs_diff"] = (cand["start_time"] - sd).abs().dt.total_seconds()
@@ -90,12 +115,21 @@ def _enrich_bets_with_espn(view: pd.DataFrame) -> pd.DataFrame:
         pick = (cand.sort_values(["bet_idx","abs_diff"])
                     .groupby("bet_idx", as_index=False).first())
 
-        # Escribir scores en la bet (y derivar team/opponent_score)
+        # Escribir TODO en la bet:
         for _, row in pick.iterrows():
             i = int(row["bet_idx"])
+            # equipos para el card (algunas UIs usan esto para logos)
+            v.at[i, "home_team"] = row["home_abbr"]
+            v.at[i, "away_team"] = row["away_abbr"]
+
+            # scores en los dos formatos
+            v.at[i, "score_home"] = row["home_score"]
+            v.at[i, "score_away"] = row["away_score"]
             v.at[i, "home_score"] = row["home_score"]
             v.at[i, "away_score"] = row["away_score"]
-            is_team_home = v.at[i, "team"] == row["home_abbr"]
+
+            # derivadas por lado del pick
+            is_team_home = (v.at[i, "team"] == row["home_abbr"])
             v.at[i, "team_score"] = row["home_score"] if is_team_home else row["away_score"]
             v.at[i, "opponent_score"] = row["away_score"] if is_team_home else row["home_score"]
 
@@ -105,28 +139,34 @@ def _enrich_bets_with_espn(view: pd.DataFrame) -> pd.DataFrame:
 def render(season: int):
     st.subheader("Overview")
 
-    # ---------- PnL y stage ----------
+    # Toggle de debug (no afecta producción si no lo activas)
+    debug = st.checkbox("Debug ESPN matching (Overview)", value=False)
+
     pnl = load_pnl_weekly(season)
     stage = season_stage(season, pnl)
 
-    # ---------- Bets de esta semana (scores via ESPN) ----------
+    # ---------- Bets de esta semana (scores vía ESPN) ----------
     bets_week = load_bets_this_week(season) if stage == "in_season" else pd.DataFrame()
     if not bets_week.empty:
         st.markdown("**This Week’s Bets**")
 
         view = bets_week.copy()
         try:
-            view = _enrich_bets_with_espn(view)
+            view = _enrich_bets_with_espn(view, debug=debug)
         except Exception:
-            # si ESPN falla, seguimos mostrando sin scores
-            pass
+            if debug:
+                st.exception("Error enriqueciendo bets con ESPN")
+            # seguimos mostrando sin scores
 
-        # Ordenado y tipos mínimos para las cards
-        for c in ("home_score","away_score","team_score","opponent_score","profit","stake","decimal_odds"):
+        # Orden y tipos mínimos para las cards
+        for c in ("score_home","score_away","home_score","away_score",
+                  "team_score","opponent_score","profit","stake","decimal_odds"):
             if c in view.columns:
                 view[c] = pd.to_numeric(view[c], errors="coerce")
+
         if "schedule_date" in view.columns:
             view["schedule_date"] = pd.to_datetime(view["schedule_date"], errors="coerce")
+
         if "week_label" in view.columns:
             view["week_label"] = view["week_label"].astype(str)
             view["__order"] = view["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
