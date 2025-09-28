@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 from .logos import get_logo_url
 from .utils import norm_abbr, decimal_to_american
 
@@ -9,21 +10,40 @@ def _s(val) -> str:
     return "" if pd.isna(val) else str(val)
 
 
+def _looks_live_from_short(short: str) -> bool:
+    """
+    Si no tenemos `state`, inferimos 'live' desde el shortDetail de ESPN.
+    Consideramos LIVE si hay 'Q1/Q2/Q3/Q4', 'OT' o un timestamp tipo '12:34'.
+    """
+    s = (short or "").upper()
+    if not s:
+        return False
+    if any(tag in s for tag in ["Q1", "Q2", "Q3", "Q4", "OT"]):
+        return True
+    # patrón mm:ss (evita 'ET' de timezone)
+    return bool(re.search(r"\b\d{1,2}:\d{2}\b", s)) and "ET" not in s
+
+
 def bet_card(row: pd.Series):
-    # Abrevs normalizadas (para logos) — ¡siempre pasar strings seguras!
+    # ===== Datos base seguros (evita TypeError con pd.NA) =====
     htm = norm_abbr(_s(row.get("home_team", ""))) or norm_abbr(_s(row.get("team", "")))
     atm = norm_abbr(_s(row.get("away_team", ""))) or norm_abbr(_s(row.get("opponent", "")))
     side = _s(row.get("side", "")).title()
 
-    # Estado / marcador (strings seguras)
-    state = _s(row.get("state", "")).lower()
-    status_short = _s(row.get("status_short", row.get("short", "")))
-
+    # Scores: aceptar ambos nombres posibles
     sh = row.get("score_home", None)
     sa = row.get("score_away", None)
+    if pd.isna(sh) and "home_score" in row:
+        sh = row.get("home_score", None)
+    if pd.isna(sa) and "away_score" in row:
+        sa = row.get("away_score", None)
     has_score = pd.notna(sh) and pd.notna(sa)
 
-    # Apuesta / stake / profit / líneas
+    # Estado / short detail
+    state = _s(row.get("state", row.get("game_state", ""))).lower()
+    status_short = _s(row.get("status_short", row.get("short", "")))
+
+    # Apuesta
     wl_profit = pd.to_numeric(row.get("profit"), errors="coerce")
     stake = pd.to_numeric(row.get("stake"), errors="coerce")
     dec = pd.to_numeric(row.get("decimal_odds"), errors="coerce")
@@ -35,12 +55,12 @@ def bet_card(row: pd.Series):
     wk = _s(row.get("week_label", row.get("week", "")))
     date_txt = _s(row.get("schedule_date", ""))[:10]
 
-    # Colores / labels del header
-    is_live  = (state == "in")
+    # ===== LIVE / FINAL / OPEN =====
     is_final = (state == "post")
+    is_live = (state == "in") or (not state and _looks_live_from_short(status_short))
 
     if is_live:
-        dot_color = "#F59E0B"   # amarillo
+        dot_color = "#F59E0B"  # amarillo
         status_label = "LIVE"
     else:
         if pd.isna(wl_profit):
@@ -95,9 +115,7 @@ def bet_card(row: pd.Series):
 
     # Pill “Pick: TEAM”
     team_pick = norm_abbr(_s(row.get("team", "")))
-    pick_badge_html = (
-        f"<span class='pill pill-pick'>Pick: {team_pick}</span>" if team_pick else ""
-    )
+    pick_badge_html = f"<span class='pill pill-pick'>Pick: {team_pick}</span>" if team_pick else ""
 
     # Estilos (pill)
     st.markdown("""
@@ -163,11 +181,10 @@ def game_card(row: pd.Series):
     as_  = row.get("away_score", None)
     state = _s(row.get("state","")).lower()
     short = _s(row.get("short",""))
-    start = row.get("start_time", "")
-
-    live = (state == "in")
+    # LIVE / FINAL
+    live = (state == "in") or _looks_live_from_short(short)
     final = (state == "post")
-    if live:
+    if live and not final:
         color = "#E11D48"
         label = "LIVE"
     elif final:
