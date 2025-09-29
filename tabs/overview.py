@@ -14,6 +14,7 @@ from nfl_dash.utils import (
 )
 from nfl_dash.live_scores import fetch_espn_scoreboard_df
 from nfl_dash.components import bet_card as render_bet_card
+from nfl_dash.charts import chart_last8_profit
 
 
 # ============
@@ -32,7 +33,7 @@ def _enrich_bets_with_espn_this_week(bets_df: pd.DataFrame, season: int) -> pd.D
         else:
             v["week"] = pd.NA
 
-    # columnas para bet_card
+    # columnas que usa bet_card
     for c in ("score_home", "score_away", "short", "status"):
         if c not in v.columns:
             v[c] = pd.NA
@@ -89,7 +90,7 @@ def _enrich_bets_with_espn_this_week(bets_df: pd.DataFrame, season: int) -> pd.D
 # ===================
 # Bankroll line chart
 # ===================
-def _bankroll_chart_from_pnl(pnl: pd.DataFrame) -> alt.Chart:
+def _bankroll_chart_from_pnl(pnl: pd.DataFrame, height: int = 260) -> alt.Chart:
     """
     Línea de bankroll que:
     - agrega un punto inicial sintético en $1000 pegado al eje Y
@@ -131,11 +132,10 @@ def _bankroll_chart_from_pnl(pnl: pd.DataFrame) -> alt.Chart:
 
     # mapeo de order->label para el eje X (solo semanas reales)
     orders_labels = {int(o): lbl for o, lbl in zip(real_orders, real_labels)}
-    # expr JS para axis.labelExpr
     js_map = "{" + ",".join([f"{int(o)}:'{lbl}'" for o, lbl in orders_labels.items()]) + "}"
     label_expr = f"({js_map})[datum.value]"
 
-    base = alt.Chart(plot_df).encode(
+    base = alt.Chart(plot_df, height=height).encode(
         x=alt.X(
             "__order:Q",
             axis=alt.Axis(
@@ -155,8 +155,9 @@ def _bankroll_chart_from_pnl(pnl: pd.DataFrame) -> alt.Chart:
                  alt.Tooltip("bankroll:Q", title="Bankroll", format="$.2f")],
     )
 
-    line = base.mark_line(point=True)
-    return line.properties(width="container", height=260)
+    # estética más limpia
+    line = base.mark_line(point=True, strokeWidth=2.2)
+    return line.properties(width="container")
 
 
 # =======
@@ -194,15 +195,14 @@ def render(season: int):
         st.caption("No `pnl.csv` found for this season.")
         return
 
-    # KPIs con Initial fijo en 1000
+    # KPIs
+    # Initial fijo en 1000; Final desde pnl o acumulando profit si no hay bankroll
     initial_bankroll = 1000.0
-    # si hay columna bankroll, tomamos el último como final; si no, acumulamos profit sobre 1000
     if "bankroll" in pnl.columns and pnl["bankroll"].notna().any():
         final_bankroll = float(pd.to_numeric(pnl["bankroll"], errors="coerce").dropna().iloc[-1])
     else:
         total_profit = float(pd.to_numeric(pnl.get("profit", pd.Series([0])), errors="coerce").fillna(0).sum())
         final_bankroll = initial_bankroll + total_profit
-
     profit_total = final_bankroll - initial_bankroll
 
     k1, k2 = st.columns(2)
@@ -211,5 +211,11 @@ def render(season: int):
     with k2:
         st.metric("Final", f"${final_bankroll:,.2f}", f"{profit_total:,.2f}")
 
-    # Gráfica de bankroll arrancando pegado al eje Y desde $1000
-    st.altair_chart(_bankroll_chart_from_pnl(pnl), use_container_width=True)
+    # Gráficos lado a lado: (izq) bankroll desde 1000 pegado a eje Y, (der) last-8 profits
+    profits_series = pd.to_numeric(pnl.get("profit", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+
+    cA, cB = st.columns(2)
+    with cA:
+        st.altair_chart(_bankroll_chart_from_pnl(pnl, height=260), use_container_width=True)
+    with cB:
+        st.altair_chart(chart_last8_profit(pnl, profits_series, last=8, height=260), use_container_width=True)
