@@ -25,12 +25,12 @@ def _enrich_bets_with_espn_all_weeks(bets_df: pd.DataFrame, season: int) -> pd.D
         else:
             df["week"] = pd.NA
 
-    # Columnas de salida esperadas por bet_card
+    # Columnas que consume bet_card
     for c in ("score_home", "score_away", "short", "status"):
         if c not in df.columns:
             df[c] = pd.NA
 
-    # Por cada semana presente en las bets, pedimos el scoreboard
+    # Pedimos scoreboard por cada semana presente en las bets
     weeks = (
         pd.to_numeric(df["week"], errors="coerce")
         .dropna()
@@ -48,7 +48,7 @@ def _enrich_bets_with_espn_all_weeks(bets_df: pd.DataFrame, season: int) -> pd.D
         sb["home_abbr"] = sb["home_team"].astype(str).map(norm_abbr)
         sb["away_abbr"] = sb["away_team"].astype(str).map(norm_abbr)
 
-        # Índice por (home, away) y (away, home)
+        # Índice por (home, away) y espejo (away, home)
         idx = {}
         for r in sb.itertuples(index=False):
             key1 = (r.home_abbr, r.away_abbr)
@@ -74,7 +74,7 @@ def _enrich_bets_with_espn_all_weeks(bets_df: pd.DataFrame, season: int) -> pd.D
                 elif side == "away":
                     h, a = opp, team
                 else:
-                    # Desconocido: intentamos igualmente ambas direcciones
+                    # Desconocido, probamos igualmente (team, opp)
                     h, a = team, opp
 
             srow = idx.get((h, a))
@@ -90,11 +90,11 @@ def _enrich_bets_with_espn_all_weeks(bets_df: pd.DataFrame, season: int) -> pd.D
 def render(season: int):
     st.subheader("Bets")
 
-    # 1) Ledger de la temporada (archivo de archive)
+    # 1) Ledger de la temporada (archive)
     bets_all_raw = load_ledger(season)
 
-    # 2) Fallback para temporada actual si no hay ledger todavía:
-    #    usa las apuestas de la semana vigente (para no dejar la pestaña vacía)
+    # 2) Fallback para temporada actual si aún no hay ledger:
+    #    usa la semana vigente para no dejar vacío
     if bets_all_raw.empty:
         wk = load_bets_this_week(season)
         if not wk.empty:
@@ -143,4 +143,4 @@ def render(season: int):
                 if idx < len(cards):
                     with col_objs[j]:
                         render_bet_card(pd.Series(cards[idx]._asdict()))
-                    idx += 1)
+                    idx += 1
