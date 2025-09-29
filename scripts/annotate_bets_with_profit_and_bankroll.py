@@ -1,11 +1,10 @@
 # scripts/annotate_bets_with_profit_and_bankroll.py
 from __future__ import annotations
 
-import math
 import pandas as pd
 from pathlib import Path
 
-BETSPATH = Path("data/archive")  # raíz donde están season=YYYY/bets.csv
+BETSPATH = Path("data/archive")  # raíz: season=YYYY/bets.csv
 
 
 def _load_all_bets() -> pd.DataFrame:
@@ -52,18 +51,18 @@ def main():
         print("No bets found.")
         return
 
-    # Normalizaciones
+    # Normalizaciones numéricas básicas
     for col in ("stake", "profit", "decimal_odds", "ml"):
         if col in bets.columns:
             bets[col] = _safe_num(bets[col])
 
-    # schedule_date para ordenar dentro de la semana
+    # schedule_date para ordenar dentro de semana
     if "schedule_date" in bets.columns:
         bets["schedule_date"] = pd.to_datetime(bets["schedule_date"], errors="coerce", utc=True)
     else:
         bets["schedule_date"] = pd.NaT
 
-    # Asegurar week_order (si no existe, intentar derivarlo de week o week_label)
+    # Asegurar week_order
     if "week_order" not in bets.columns:
         if "week" in bets.columns:
             bets["week_order"] = _safe_num(bets["week"]).fillna(999).astype(int)
@@ -73,89 +72,79 @@ def main():
         else:
             bets["week_order"] = 999
 
-    # Garantizar columnas objetivo
-    for col in ["result", "bankroll_after", "bankroll_week_final", "week_is_final"]:
+    # Asegurar columnas que pueden faltar
+    for col in ["team_score", "opponent_score", "status", "status_short",
+                "result", "bankroll_after", "bankroll_week_final", "week_is_final", "bankroll"]:
         if col not in bets.columns:
             bets[col] = pd.NA
 
-    # Siempre recalcular result a partir de los scores si el partido está finalizado
-    # (o si ambos scores están disponibles).
-    if "status" in bets.columns:
-        st = bets["status"].astype(str).str.upper()
-        is_final = st.eq("FINAL")
-    else:
-        # si no hay status, considera final cuando hay 2 scores
-        is_final = bets["team_score"].notna() & bets["opponent_score"].notna()
+    # Scores como numérico (si existen)
+    team_score = _safe_num(bets.get("team_score", pd.Series([pd.NA] * len(bets))))
+    opp_score  = _safe_num(bets.get("opponent_score", pd.Series([pd.NA] * len(bets))))
+    bets["team_score"] = team_score
+    bets["opponent_score"] = opp_score
 
-    # Result: WIN/LOSS/PUSH cuando hay scores
+    # is_final: usa status==FINAL si existe; si no, ambos scores presentes
+    if "status" in bets.columns:
+        is_final = bets["status"].astype(str).str.upper().eq("FINAL")
+    else:
+        is_final = team_score.notna() & opp_score.notna()
+
+    # Recalcular siempre el result cuando hay scores
     bets["result"] = [
-        _decide_result(a, b) if f else pd.NA
-        for a, b, f in zip(bets.get("team_score"), bets.get("opponent_score"), (is_final | (bets["team_score"].notna() & bets["opponent_score"].notna())))
+        _decide_result(a, b) if (pd.notna(a) and pd.notna(b)) else pd.NA
+        for a, b in zip(team_score, opp_score)
     ]
 
-    # Orden “total” para procesar secuencialmente por temporada y semana
+    # Orden global para procesar secuencialmente por (season, week, kickoff)
     bets["__sort_week"] = bets["week_order"].astype(int)
-    # Si no hay fecha, ponemos NaT; al ordenar, NaT va al final
     bets["__sort_time"] = bets["schedule_date"]
 
-    # Recalcular bankroll_after y flags por (season, week)
     out = []
+    # Mapa: semana -> bankroll final (solo si la semana quedó COMPLETA)
     for season, g_season in bets.sort_values(["__sort_week", "__sort_time"], kind="stable").groupby("season", sort=True):
         g_season = g_season.copy()
+        prev_week_final = {}  # {week_order: bankroll_final}
 
-        # Construir índice de bankroll final para semana previa
-        # (lo recalculamos aquí mismo para no depender de versiones previas)
-        prev_week_final = {}
-
-        # ordenamos por semana y por hora dentro de semana
         for wk, g_week in g_season.sort_values(["__sort_week", "__sort_time"], kind="stable").groupby("__sort_week", sort=True):
             g_week = g_week.copy().sort_values(["__sort_week", "__sort_time"], kind="stable")
 
-            # Bankroll inicial de esta semana: bankroll final de la semana anterior si existe; si no, 1000
+            # Bankroll inicial de esta semana = bankroll final de semana anterior si cerró; si no, 1000
             start_bank = prev_week_final.get(wk - 1, 1000.0)
-
-            # Setear 'bankroll' (columna base) como el bankroll de inicio de semana para todas las filas
-            g_week["bankroll"] = start_bank
+            g_week["bankroll"] = float(start_bank)
 
             running = float(start_bank)
             last_final_bank = pd.NA
-            any_final = False
 
-            # Recorremos cronológicamente
+            # Avanzar por cada apuesta en el orden cronológico
             for i, row in g_week.iterrows():
                 settled = bool(is_final.loc[i]) or (
                     pd.notna(row.get("team_score")) and pd.notna(row.get("opponent_score"))
                 )
-
-                # Si está final, su bankroll_after = running + profit
                 if settled and pd.notna(row.get("profit")):
-                    any_final = True
-                    running = float(running) + float(row["profit"])
+                    running = running + float(row["profit"])
                     g_week.at[i, "bankroll_after"] = running
                     last_final_bank = running
                 else:
-                    # Si no está final, lo dejamos en NA (no queremos arrastrar “supuestos”)
                     g_week.at[i, "bankroll_after"] = pd.NA
 
-            # Flags de semana
-            g_week["week_is_final"] = bool(any_final and g_week["result"].notna().all())
-            g_week["bankroll_week_final"] = last_final_bank
+            # ¿La semana está completamente finalizada?
+            all_final = g_week["result"].notna().all()
+            g_week["week_is_final"] = bool(all_final)
+            g_week["bankroll_week_final"] = last_final_bank if all_final else pd.NA
 
-            # Guardar para que la próxima semana arranque desde aquí
-            if pd.notna(last_final_bank):
+            # Solo si la semana quedó completa, ese será el bankroll inicial de la semana siguiente
+            if all_final and pd.notna(last_final_bank):
                 prev_week_final[wk] = float(last_final_bank)
 
             out.append(g_week)
-
-        # fin for wk
-    # fin for season
 
     final_df = pd.concat(out, ignore_index=True).sort_values(
         ["season", "__sort_week", "__sort_time"], kind="stable"
     )
 
     _write_back(final_df)
-    print("✅ annotate_bets_with_profit_and_bankroll: recalculado result y bankroll_after.")
+    print("✅ annotate_bets_with_profit_and_bankroll: recalculado result y bankroll_after/semana.")
 
 
 if __name__ == "__main__":
