@@ -1,337 +1,161 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-Anota las apuestas con marcadores/estado y genera pnl semanal.
-
-Entrada:
-  - data/live/bets.csv  (debe tener: season, week, side, team, opponent, stake, ml o decimal_odds)
-
-Salida:
-  - data/live/bets.csv  (mismo archivo, enriquecido con: team_score, opponent_score, status, status_short, profit)
-  - data/live/pnl.csv   (por temporada/semana: profit, stake, bankroll, week_label)
-
-Requiere:
-  - Paquete del repo: nfl_dash.utils (norm_abbr, american_to_decimal)
-  - Internet para consultar ESPN
-"""
-
+# scripts/annotate_bets_with_profit_and_bankroll.py
 from __future__ import annotations
-import sys
-import json
-import time
+
 import math
-import requests
 import pandas as pd
 from pathlib import Path
 
-# --- Paths
-ROOT = Path(__file__).resolve().parents[1]
-LIVE_DIR = ROOT / "data" / "live"
-BETS_CSV = LIVE_DIR / "bets.csv"
-PNL_CSV  = LIVE_DIR / "pnl.csv"
-
-# --- Imports del paquete
-sys.path.insert(0, str(ROOT))
-from nfl_dash.utils import norm_abbr, american_to_decimal  # noqa: E402
-
-# --- ESPN API
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json,text/plain,*/*",
-    "Connection": "keep-alive",
-}
-ENDPOINTS = [
-    "https://site.web.api.espn.com/apis/v2/sports/football/nfl/scoreboard",
-    "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
-]
+BETSPATH = Path("data/archive")  # raíz donde están season=YYYY/bets.csv
 
 
-def _safe_get(params: dict, timeout: int = 20, retries: int = 3):
-    last_err = None
-    for attempt in range(retries):
-        for base in ENDPOINTS:
-            try:
-                r = requests.get(base, params=params, headers=HEADERS, timeout=timeout)
-                if r.status_code == 200:
-                    return r.json()
-                if r.status_code in (403, 429, 503):
-                    time.sleep(1.5 * (attempt + 1))
-                    continue
-            except requests.RequestException as e:
-                last_err = e
-                time.sleep(0.5 * (attempt + 1))
-                continue
-    if last_err:
-        print(f"[WARN] ESPN fetch failed: {last_err}", file=sys.stderr)
-    return None
+def _load_all_bets() -> pd.DataFrame:
+    frames = []
+    for p in sorted(BETSPATH.glob("season=*/bets.csv")):
+        season = int(str(p.parent.name).split("=")[1])
+        df = pd.read_csv(p, low_memory=False)
+        df["season"] = season
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def fetch_espn_scoreboard_df(season: int, week: int) -> pd.DataFrame:
-    """
-    Devuelve DataFrame con columnas:
-      home_team, away_team, home_score, away_score, state(pre/in/post), short, start_time
-    """
-    params = {"seasontype": 2, "week": int(week), "dates": int(season)}
-    data = _safe_get(params=params, timeout=20, retries=3)
-    rows = []
-    if data:
-        for ev in data.get("events", []) or []:
-            comps = ev.get("competitions") or []
-            if not comps:
-                continue
-            comp = comps[0]
-
-            st_type = (comp.get("status") or {}).get("type") or {}
-            state = str(st_type.get("state") or "").lower()  # pre|in|post
-            short = str(st_type.get("shortDetail") or "")
-            start_time = comp.get("date")
-
-            home_team = away_team = None
-            home_score = away_score = None
-            for c in comp.get("competitors", []) or []:
-                team = c.get("team") or {}
-                name = team.get("displayName") or team.get("name")
-                try:
-                    score = int(c.get("score")) if c.get("score") is not None else None
-                except Exception:
-                    score = None
-                if str(c.get("homeAway")) == "home":
-                    home_team, home_score = name, score
-                else:
-                    away_team, away_score = name, score
-
-            if home_team and away_team:
-                rows.append(
-                    {
-                        "home_team": home_team,
-                        "away_team": away_team,
-                        "home_score": home_score,
-                        "away_score": away_score,
-                        "state": state,
-                        "short": short,
-                        "start_time": pd.to_datetime(start_time, errors="coerce", utc=True),
-                    }
-                )
-
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
-
-    df["home_abbr"] = df["home_team"].astype(str).map(norm_abbr)
-    df["away_abbr"] = df["away_team"].astype(str).map(norm_abbr)
-    return df
+def _safe_num(s):
+    return pd.to_numeric(s, errors="coerce")
 
 
-def _compute_profit(stake: float, dec_odds: float, team_score, opp_score, status: str):
-    """
-    Regresa profit o NaN si no finalizó; 0 si push.
-    """
-    if pd.isna(team_score) or pd.isna(opp_score) or str(status).upper() not in {"FINAL", "POST"}:
+def _decide_result(team_score, opp_score):
+    if pd.isna(team_score) or pd.isna(opp_score):
         return pd.NA
     try:
-        s = float(stake) if stake is not None else 0.0
-        d = float(dec_odds) if dec_odds is not None else None
+        a, b = float(team_score), float(opp_score)
     except Exception:
         return pd.NA
-
-    if d is None or s <= 0:
-        return pd.NA
-
-    if team_score > opp_score:
-        return round(s * (d - 1.0), 2)
-    elif team_score < opp_score:
-        return round(-s, 2)
+    if a > b:
+        return "WIN"
+    elif a < b:
+        return "LOSS"
     else:
-        # push
-        return 0.0
+        return "PUSH"
 
 
-def _week_label(n: int) -> str:
-    if 1 <= n <= 18:
-        return f"Week {n}"
-    mapping = {19: "Wild Card", 20: "Divisional", 21: "Conference", 22: "Super Bowl"}
-    return mapping.get(int(n), f"Week {n}")
+def _write_back(df: pd.DataFrame):
+    # Guardar devuelta por temporada
+    for season, g in df.groupby("season"):
+        out = g.drop(columns=["__sort_week", "__sort_time"], errors="ignore").copy()
+        out = out.sort_values(["week_order", "schedule_date"], kind="stable")
+        f = BETSPATH / f"season={season}" / "bets.csv"
+        out.to_csv(f, index=False)
 
 
 def main():
-    if not BETS_CSV.exists():
-        print(f"[INFO] Bets file not found: {BETS_CSV}", file=sys.stderr)
+    bets = _load_all_bets()
+    if bets.empty:
+        print("No bets found.")
         return
 
-    bets = pd.read_csv(BETS_CSV, low_memory=False)
+    # Normalizaciones
+    for col in ("stake", "profit", "decimal_odds", "ml"):
+        if col in bets.columns:
+            bets[col] = _safe_num(bets[col])
 
-    # Normaliza columnas básicas
-    for c in ("season", "week", "stake", "decimal_odds", "ml"):
-        if c in bets.columns:
-            bets[c] = pd.to_numeric(bets[c], errors="coerce")
+    # schedule_date para ordenar dentro de la semana
+    if "schedule_date" in bets.columns:
+        bets["schedule_date"] = pd.to_datetime(bets["schedule_date"], errors="coerce", utc=True)
+    else:
+        bets["schedule_date"] = pd.NaT
 
-    # decimal_odds desde ml si falta
-    if "decimal_odds" not in bets.columns:
-        bets["decimal_odds"] = pd.NA
-    if "ml" in bets.columns:
-        missing = bets["decimal_odds"].isna()
-        bets.loc[missing, "decimal_odds"] = bets.loc[missing, "ml"].apply(american_to_decimal)
-
-    # normaliza teams/sides
-    for c in ("team", "opponent"):
-        if c in bets.columns:
-            bets[c] = bets[c].astype(str).map(norm_abbr)
+    # Asegurar week_order (si no existe, intentar derivarlo de week o week_label)
+    if "week_order" not in bets.columns:
+        if "week" in bets.columns:
+            bets["week_order"] = _safe_num(bets["week"]).fillna(999).astype(int)
+        elif "week_label" in bets.columns:
+            wk = bets["week_label"].astype(str).str.extract(r"(\d+)")[0]
+            bets["week_order"] = _safe_num(wk).fillna(999).astype(int)
         else:
-            bets[c] = ""
+            bets["week_order"] = 999
 
-    if "side" not in bets.columns:
-        bets["side"] = ""
-    bets["side"] = bets["side"].astype(str).str.lower()
+    # Garantizar columnas objetivo
+    for col in ["result", "bankroll_after", "bankroll_week_final", "week_is_final"]:
+        if col not in bets.columns:
+            bets[col] = pd.NA
 
-    # temporada/semana objetivo: toma maxima (la actual)
-    season = int(pd.to_numeric(bets.get("season", pd.Series([pd.NA])), errors="coerce").dropna().max())
-    # Si no hay season, nada que hacer
-    if not season or math.isnan(season):
-        print("[WARN] No season detected in bets.csv", file=sys.stderr)
-        return
+    # Siempre recalcular result a partir de los scores si el partido está finalizado
+    # (o si ambos scores están disponibles).
+    if "status" in bets.columns:
+        st = bets["status"].astype(str).str.upper()
+        is_final = st.eq("FINAL")
+    else:
+        # si no hay status, considera final cuando hay 2 scores
+        is_final = bets["team_score"].notna() & bets["opponent_score"].notna()
 
-    # Trae scoreboard por semana única de las filas de esa season
-    weeks = sorted(pd.to_numeric(bets.loc[bets["season"] == season, "week"], errors="coerce").dropna().unique().tolist())
-    if not weeks:
-        print("[WARN] No week values for current season.", file=sys.stderr)
+    # Result: WIN/LOSS/PUSH cuando hay scores
+    bets["result"] = [
+        _decide_result(a, b) if f else pd.NA
+        for a, b, f in zip(bets.get("team_score"), bets.get("opponent_score"), (is_final | (bets["team_score"].notna() & bets["opponent_score"].notna())))
+    ]
 
-    # Índice ESPN por (home_abbr, away_abbr)
-    idx_by_week: dict[int, dict[tuple[str, str], dict]] = {}
-    for wk in weeks:
-        es = fetch_espn_scoreboard_df(season=season, week=int(wk))
-        tmp = {}
-        for r in es.to_dict("records"):
-            ha, aa = r["home_abbr"], r["away_abbr"]
-            tmp[(ha, aa)] = r
-            tmp[(aa, ha)] = r
-        idx_by_week[int(wk)] = tmp
+    # Orden “total” para procesar secuencialmente por temporada y semana
+    bets["__sort_week"] = bets["week_order"].astype(int)
+    # Si no hay fecha, ponemos NaT; al ordenar, NaT va al final
+    bets["__sort_time"] = bets["schedule_date"]
 
-    # Columnas de salida
-    bets["team_score"] = pd.NA
-    bets["opponent_score"] = pd.NA
-    bets["status"] = pd.NA         # FINAL / LIVE / OPEN
-    bets["status_short"] = pd.NA
-    bets["profit"] = pd.NA
+    # Recalcular bankroll_after y flags por (season, week)
+    out = []
+    for season, g_season in bets.sort_values(["__sort_week", "__sort_time"], kind="stable").groupby("season", sort=True):
+        g_season = g_season.copy()
 
-    # Anota por fila
-    for i, r in bets.iterrows():
-        if int(r.get("season", season)) != season:
-            continue
-        wk = r.get("week")
-        if pd.isna(wk):
-            continue
-        wk = int(wk)
-        t = r.get("team", "")
-        o = r.get("opponent", "")
-        side = str(r.get("side", "")).lower()
+        # Construir índice de bankroll final para semana previa
+        # (lo recalculamos aquí mismo para no depender de versiones previas)
+        prev_week_final = {}
 
-        # Determinar (home,away) de la vista-bet
-        if side == "home":
-            home, away = t, o
-        elif side == "away":
-            home, away = o, t
-        else:
-            # intentar inferir por key directo
-            home, away = None, None
+        # ordenamos por semana y por hora dentro de semana
+        for wk, g_week in g_season.sort_values(["__sort_week", "__sort_time"], kind="stable").groupby("__sort_week", sort=True):
+            g_week = g_week.copy().sort_values(["__sort_week", "__sort_time"], kind="stable")
 
-        es_idx = idx_by_week.get(wk, {})
+            # Bankroll inicial de esta semana: bankroll final de la semana anterior si existe; si no, 1000
+            start_bank = prev_week_final.get(wk - 1, 1000.0)
 
-        srow = None
-        if home and away:
-            srow = es_idx.get((home, away))
-        else:
-            # intento 1
-            srow = es_idx.get((t, o))
-            if not srow:
-                srow = es_idx.get((o, t))
+            # Setear 'bankroll' (columna base) como el bankroll de inicio de semana para todas las filas
+            g_week["bankroll"] = start_bank
 
-        if not srow:
-            # no encontrado: queda OPEN
-            bets.at[i, "status"] = "OPEN"
-            continue
+            running = float(start_bank)
+            last_final_bank = pd.NA
+            any_final = False
 
-        # estado y marcadores
-        state = str(srow.get("state") or "").lower()
-        status = "FINAL" if state == "post" else ("LIVE" if state == "in" else "OPEN")
-        bets.at[i, "status"] = status
-        bets.at[i, "status_short"] = srow.get("short")
+            # Recorremos cronológicamente
+            for i, row in g_week.iterrows():
+                settled = bool(is_final.loc[i]) or (
+                    pd.notna(row.get("team_score")) and pd.notna(row.get("opponent_score"))
+                )
 
-        hs = srow.get("home_score")
-        as_ = srow.get("away_score")
+                # Si está final, su bankroll_after = running + profit
+                if settled and pd.notna(row.get("profit")):
+                    any_final = True
+                    running = float(running) + float(row["profit"])
+                    g_week.at[i, "bankroll_after"] = running
+                    last_final_bank = running
+                else:
+                    # Si no está final, lo dejamos en NA (no queremos arrastrar “supuestos”)
+                    g_week.at[i, "bankroll_after"] = pd.NA
 
-        # asignar scores del lado apostado
-        # Si no definimos home/away por side, lo deducimos de srow:
-        if home is None or away is None:
-            ha = srow.get("home_abbr"); aa = srow.get("away_abbr")
-            # si el team coincide con el home del juego, apostaste al home
-            if t == ha:
-                home, away = ha, aa
-                side = "home"
-            elif t == aa:
-                home, away = ha, aa
-                side = "away"
-            else:
-                # fallback: no podemos mapear -> sin scores
-                continue
+            # Flags de semana
+            g_week["week_is_final"] = bool(any_final and g_week["result"].notna().all())
+            g_week["bankroll_week_final"] = last_final_bank
 
-        if side == "home":
-            team_sc, opp_sc = hs, as_
-        else:
-            team_sc, opp_sc = as_, hs
+            # Guardar para que la próxima semana arranque desde aquí
+            if pd.notna(last_final_bank):
+                prev_week_final[wk] = float(last_final_bank)
 
-        bets.at[i, "team_score"] = team_sc
-        bets.at[i, "opponent_score"] = opp_sc
+            out.append(g_week)
 
-        # profit sólo si FINAL
-        stake = r.get("stake")
-        dec = r.get("decimal_odds")
-        bets.at[i, "profit"] = _compute_profit(stake, dec, team_sc, opp_sc, status)
+        # fin for wk
+    # fin for season
 
-    # Guardar bets enriquecidas
-    LIVE_DIR.mkdir(parents=True, exist_ok=True)
-    bets.to_csv(BETS_CSV, index=False)
+    final_df = pd.concat(out, ignore_index=True).sort_values(
+        ["season", "__sort_week", "__sort_time"], kind="stable"
+    )
 
-    # ---- PNL semanal (por season)
-    df = bets[bets["season"] == season].copy()
-
-    # Semana numérica
-    df["week_num"] = pd.to_numeric(df.get("week"), errors="coerce")
-
-    # Sólo cuenta profit final (FINAL) para pnl; NaN en otros
-    mask_final = df["status"].astype(str).str.upper().eq("FINAL")
-    df.loc[~mask_final, "profit"] = pd.NA
-
-    grp = df.groupby("week_num", dropna=True)
-    agg = grp.agg(
-        profit=("profit", lambda s: pd.to_numeric(s, errors="coerce").dropna().sum()),
-        stake=("stake",  lambda s: pd.to_numeric(s, errors="coerce").dropna().sum()),
-    ).reset_index()
-
-    if agg.empty:
-        # crear archivo vacío mínimo
-        out = pd.DataFrame(columns=["season", "week", "week_label", "profit", "stake", "bankroll"])
-        out.to_csv(PNL_CSV, index=False)
-        print("[INFO] pnl.csv written (empty).")
-        return
-
-    agg = agg.sort_values("week_num")
-    agg["season"] = season
-    agg["week"] = agg["week_num"].astype(int)
-    agg["week_label"] = agg["week"].apply(_week_label)
-
-    # bankroll acumulado desde 1000
-    initial = 1000.0
-    profits = pd.to_numeric(agg["profit"], errors="coerce").fillna(0.0).values
-    bankroll = [initial + profits[:i+1].sum() for i in range(len(profits))]
-    agg["bankroll"] = bankroll
-
-    out_cols = ["season", "week", "week_label", "profit", "stake", "bankroll"]
-    agg[out_cols].to_csv(PNL_CSV, index=False)
-    print("[INFO] bets.csv and pnl.csv written successfully.")
+    _write_back(final_df)
+    print("✅ annotate_bets_with_profit_and_bankroll: recalculado result y bankroll_after.")
 
 
 if __name__ == "__main__":
