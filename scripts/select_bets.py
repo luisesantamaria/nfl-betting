@@ -67,7 +67,7 @@ CFG = dict(
 
     # Filtros base (edge/conf/EV) — base algo más amable
     CONF_MIN         = 0.085,     # antes 0.090
-    EDGE_TAU         = 0.055,     # antes 0.060
+    EDGE_TAU         = 0.050,     # antes 0.060
     EV_BASE_MIN      = 0.010,     # antes 0.012
 
     # Relajación deseada
@@ -91,13 +91,10 @@ CFG = dict(
 # Pasos de relajación (más agresivos, pero con suelo EV > LH_MIN_POS_EV)
 RELAX_STEPS = [
     dict(EDGE_TAU=0.050, CONF_MIN=0.080, EV_BASE_MIN=0.008),
+    dict(EDGE_TAU=0.0475, CONF_MIN=0.075, EV_BASE_MIN=0.006),
     dict(EDGE_TAU=0.045, CONF_MIN=0.075, EV_BASE_MIN=0.006),
     dict(EDGE_TAU=0.040, CONF_MIN=0.070, EV_BASE_MIN=0.004),
     dict(EDGE_TAU=0.0375, CONF_MIN=0.065, EV_BASE_MIN=0.0035),
-    dict(EDGE_TAU=0.035, CONF_MIN=0.060, EV_BASE_MIN=0.003, allow_two_sides=True),
-    dict(EDGE_TAU=0.0325, CONF_MIN=0.058, EV_BASE_MIN=0.0025, allow_two_sides=True),
-    dict(EDGE_TAU=0.030, CONF_MIN=0.055, EV_BASE_MIN=0.0022, allow_two_sides=True),
-    dict(EDGE_TAU=0.0275, CONF_MIN=0.053, EV_BASE_MIN=0.0020, allow_two_sides=True),
 ]
 
 # ----------------------------
