@@ -21,7 +21,6 @@ EWM_ALPHA = 0.35      # igual que tu notebook
 
 TEAM_FIX = {
     "STL":"LA","LAR":"LA","SD":"LAC","SDG":"LAC","OAK":"LV","LVR":"LV","WSH":"WAS","JAC":"JAX",
-    # aliases frecuentes de nflverse/feeds
     "GNB":"GB","KAN":"KC","NWE":"NE","NOR":"NO","SFO":"SF","TAM":"TB"
 }
 
@@ -110,7 +109,9 @@ def build_team_game_df(target_season: int) -> pd.DataFrame:
     pbp["week"] = pbp["week"].astype(int)
     pbp["week"] = [normalize_week(st, w) for st, w in zip(pbp["season_type"], pbp["week"])]
     pbp = pbp[pbp["week"].notna()].copy()
-    pbp["game_date"] = pd.to_datetime(pbp.get("game_date", pd.NaT), errors="coerce")
+
+    # <<< Asegurar UTC (tz-aware) desde aquí >>>
+    pbp["game_date"] = pd.to_datetime(pbp.get("game_date", pd.NaT), errors="coerce", utc=True)
 
     # Limitar hasta la semana efectiva
     wk_eff = effective_week(target_season)
@@ -225,22 +226,25 @@ def build_team_game_df(target_season: int) -> pd.DataFrame:
                 return f"{season}_{week:02d}_{away}_{home}"
         except Exception:
             pass
+    # Si no podemos reconstruir, deja el original
         return row["game_id"]
 
     team_game["game_id"] = team_game.apply(_rebuild_gid, axis=1)
     return team_game
 
 # ---------------------------------
-# Rolling/expanding pregame (YTD)
+# Rolling/expanding pregame (YTD) — armado en bloque para evitar fragmentación
 # ---------------------------------
 def build_pregame_one_season(df_team_season: pd.DataFrame, metric_cols: list[str]) -> pd.DataFrame:
-    out = df_team_season[["game_id","season","week","team","game_date"]].copy()
+    base = df_team_season[["game_id","season","week","team","game_date"]].copy()
+    out_parts = {"game_id": base["game_id"], "season": base["season"],
+                 "week": base["week"], "team": base["team"], "game_date": base["game_date"]}
     for c in metric_cols:
         s_prev = df_team_season[c].shift(1)
-        out[f"{c}_pre_ytd"] = s_prev.expanding(min_periods=1).mean()
-        out[f"{c}_pre_ewm"] = s_prev.ewm(alpha=EWM_ALPHA, adjust=False).mean()
-        out[f"{c}_pre_l8"]  = s_prev.rolling(window=8, min_periods=1).mean()
-    return out
+        out_parts[f"{c}_pre_ytd"] = s_prev.expanding(min_periods=1).mean()
+        out_parts[f"{c}_pre_ewm"] = s_prev.ewm(alpha=EWM_ALPHA, adjust=False).mean()
+        out_parts[f"{c}_pre_l8"]  = s_prev.rolling(window=8, min_periods=1).mean()
+    return pd.DataFrame(out_parts)
 
 def _rebuild_gid_from_teams(season: int, week: int, away: str, home: str) -> str:
     return f"{season}_{int(week):02d}_{away}_{home}"
@@ -252,7 +256,7 @@ def _pad_next_week_from_odds(pregame: pd.DataFrame, season: int, out_order: list
     """
     LIVE_ODDS_PATH = os.path.join("data", "live", "odds.csv")
     if not os.path.exists(LIVE_ODDS_PATH):
-        return pregame  # Sin odds no podemos acolchonar
+        return pregame
 
     if pregame["week"].dropna().empty:
         return pregame
@@ -263,26 +267,30 @@ def _pad_next_week_from_odds(pregame: pd.DataFrame, season: int, out_order: list
         return pregame
 
     odds = pd.read_csv(LIVE_ODDS_PATH, low_memory=False)
+
+    # Tipos consistentes
     for c in ("season","week"):
         if c in odds.columns:
             odds[c] = pd.to_numeric(odds[c], errors="coerce").astype("Int64")
+
     for c in ("home_team","away_team"):
         if c in odds.columns:
             odds[c] = (odds[c].astype(str).str.upper().str.strip()
                        .map(lambda x: TEAM_FIX.get(x, x)))
+
     if "schedule_date" in odds.columns:
         odds["schedule_date"] = pd.to_datetime(odds["schedule_date"], errors="coerce", utc=True)
 
-    mask = (odds["season"].eq(season)) & (odds["week"].eq(next_wk))
+    mask = (odds.get("season", pd.Series(dtype="Int64")).eq(season)) & (odds.get("week", pd.Series(dtype="Int64")).eq(next_wk))
     cols_cal = [c for c in ["season","week","home_team","away_team","schedule_date"] if c in odds.columns]
-    cal = odds.loc[mask, cols_cal].dropna(subset=["home_team","away_team"])
+    cal = odds.loc[mask.fillna(False), cols_cal].dropna(subset=["home_team","away_team"])
     if cal.empty:
         return pregame
 
     # Último snapshot por equipo (hasta wk_eff)
     last_by_team = (
-        pregame.sort_values(["team","week","game_date"], kind="stable")
-               .groupby("team", as_index=False)
+        pregame.sort_values(["team","week","game_date"], kind="mergesort")
+               .groupby("team", as_index=False, sort=False)
                .tail(1)
                .set_index("team")
     )
@@ -292,7 +300,7 @@ def _pad_next_week_from_odds(pregame: pd.DataFrame, season: int, out_order: list
     for _, r in cal.iterrows():
         season_i, week_i = int(r["season"]), int(r["week"])
         home, away = str(r["home_team"]), str(r["away_team"])
-        gd = pd.to_datetime(r["schedule_date"], utc=True) if "schedule_date" in r and pd.notna(r["schedule_date"]) else pd.NaT
+        gd = pd.to_datetime(r.get("schedule_date", pd.NaT), utc=True)
 
         base_h = last_by_team.loc[home] if home in last_by_team.index else None
         base_a = last_by_team.loc[away] if away in last_by_team.index else None
@@ -320,10 +328,15 @@ def _pad_next_week_from_odds(pregame: pd.DataFrame, season: int, out_order: list
             pad_df[c] = np.nan
     pad_df = pad_df[out_order]
 
-    key_cols = ["season","week","team","game_id"]
+    # Tipos robustos antes de ordenar
     merged = pd.concat([pregame, pad_df], ignore_index=True)
+    merged["week"] = pd.to_numeric(merged["week"], errors="coerce")
+    merged["game_date"] = pd.to_datetime(merged["game_date"], errors="coerce", utc=True)
+    merged["team"] = merged["team"].astype(str)
+    merged["game_id"] = merged["game_id"].astype(str)
+
     merged = merged.sort_values(["week","game_date","team","game_id"], kind="mergesort")
-    merged = merged.drop_duplicates(key_cols, keep="first")
+    merged = merged.drop_duplicates(["season","week","team","game_id"], keep="first")
     return merged
 
 def build_pregame_current_season(target_season: int) -> pd.DataFrame:
@@ -388,9 +401,11 @@ def build_pregame_current_season(target_season: int) -> pd.DataFrame:
 
     pregame = pregame[ordered].copy()
 
-    # Orden consistente: Week asc., luego fecha, luego team y game_id
-    pregame["game_date"] = pd.to_datetime(pregame["game_date"], errors="coerce")
+    # Orden consistente: Week asc., luego fecha, luego team y game_id (todo tipado)
     pregame["week"] = pd.to_numeric(pregame["week"], errors="coerce")
+    pregame["game_date"] = pd.to_datetime(pregame["game_date"], errors="coerce", utc=True)
+    pregame["team"] = pregame["team"].astype(str)
+    pregame["game_id"] = pregame["game_id"].astype(str)
 
     pregame = pregame.sort_values(["week","game_date","team","game_id"], kind="mergesort").reset_index(drop=True)
 
