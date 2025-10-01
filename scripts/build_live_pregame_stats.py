@@ -19,7 +19,11 @@ CUTOVER_DOW_ET  = 2   # 0=Mon,1=Tue,2=Wed
 CUTOVER_HOUR_ET = 2   # 02:00 ET
 EWM_ALPHA = 0.35      # igual que tu notebook
 
-TEAM_FIX = {"STL":"LA","LAR":"LA","SD":"LAC","SDG":"LAC","OAK":"LV","LVR":"LV","WSH":"WAS","JAC":"JAX"}
+TEAM_FIX = {
+    "STL":"LA","LAR":"LA","SD":"LAC","SDG":"LAC","OAK":"LV","LVR":"LV","WSH":"WAS","JAC":"JAX",
+    # aliases frecuentes de nflverse/feeds
+    "GNB":"GB","KAN":"KC","NWE":"NE","NOR":"NO","SFO":"SF","TAM":"TB"
+}
 
 NEED = [
     "game_id","game_date","season","week","season_type",
@@ -118,7 +122,8 @@ def build_team_game_df(target_season: int) -> pd.DataFrame:
     # Normalizar equipos
     for col in ["posteam", "defteam", "home_team", "away_team"]:
         if col in pbp.columns:
-            pbp[col] = pbp[col].astype(str).str.upper().str.strip().map(lambda x: TEAM_FIX.get(x, x))
+            pbp[col] = (pbp[col].astype(str).str.upper().str.strip()
+                        .map(lambda x: TEAM_FIX.get(x, x)))
 
     # Flags por jugada
     is_pass = pbp["play_type"].eq("pass")
@@ -215,6 +220,7 @@ def build_team_game_df(target_season: int) -> pd.DataFrame:
             season = int(row["season"]); week = int(row["week"])
             home = str(row.get("home_team") or "").upper()
             away = str(row.get("away_team") or "").upper()
+            home = TEAM_FIX.get(home, home); away = TEAM_FIX.get(away, away)
             if home and away:
                 return f"{season}_{week:02d}_{away}_{home}"
         except Exception:
@@ -235,6 +241,90 @@ def build_pregame_one_season(df_team_season: pd.DataFrame, metric_cols: list[str
         out[f"{c}_pre_ewm"] = s_prev.ewm(alpha=EWM_ALPHA, adjust=False).mean()
         out[f"{c}_pre_l8"]  = s_prev.rolling(window=8, min_periods=1).mean()
     return out
+
+def _rebuild_gid_from_teams(season: int, week: int, away: str, home: str) -> str:
+    return f"{season}_{int(week):02d}_{away}_{home}"
+
+def _pad_next_week_from_odds(pregame: pd.DataFrame, season: int, out_order: list[str]) -> pd.DataFrame:
+    """
+    Crea filas para la semana siguiente (wk_eff+1) usando el calendario de data/live/odds.csv
+    y copia las métricas *_pre_* del último registro disponible por equipo (hasta wk_eff).
+    """
+    LIVE_ODDS_PATH = os.path.join("data", "live", "odds.csv")
+    if not os.path.exists(LIVE_ODDS_PATH):
+        return pregame  # Sin odds no podemos acolchonar
+
+    if pregame["week"].dropna().empty:
+        return pregame
+
+    wk_eff = int(pregame["week"].max())
+    next_wk = wk_eff + 1
+    if next_wk > 22:
+        return pregame
+
+    odds = pd.read_csv(LIVE_ODDS_PATH, low_memory=False)
+    for c in ("season","week"):
+        if c in odds.columns:
+            odds[c] = pd.to_numeric(odds[c], errors="coerce").astype("Int64")
+    for c in ("home_team","away_team"):
+        if c in odds.columns:
+            odds[c] = (odds[c].astype(str).str.upper().str.strip()
+                       .map(lambda x: TEAM_FIX.get(x, x)))
+    if "schedule_date" in odds.columns:
+        odds["schedule_date"] = pd.to_datetime(odds["schedule_date"], errors="coerce", utc=True)
+
+    mask = (odds["season"].eq(season)) & (odds["week"].eq(next_wk))
+    cols_cal = [c for c in ["season","week","home_team","away_team","schedule_date"] if c in odds.columns]
+    cal = odds.loc[mask, cols_cal].dropna(subset=["home_team","away_team"])
+    if cal.empty:
+        return pregame
+
+    # Último snapshot por equipo (hasta wk_eff)
+    last_by_team = (
+        pregame.sort_values(["team","week","game_date"], kind="stable")
+               .groupby("team", as_index=False)
+               .tail(1)
+               .set_index("team")
+    )
+
+    # Armar filas home/away de la próxima semana
+    rows = []
+    for _, r in cal.iterrows():
+        season_i, week_i = int(r["season"]), int(r["week"])
+        home, away = str(r["home_team"]), str(r["away_team"])
+        gd = pd.to_datetime(r["schedule_date"], utc=True) if "schedule_date" in r and pd.notna(r["schedule_date"]) else pd.NaT
+
+        base_h = last_by_team.loc[home] if home in last_by_team.index else None
+        base_a = last_by_team.loc[away] if away in last_by_team.index else None
+
+        def make_row(team, base_row):
+            row = {c: np.nan for c in out_order}
+            row["season"] = season_i
+            row["week"]   = week_i
+            row["team"]   = team
+            row["game_date"] = gd
+            row["week_label"] = f"Week {week_i}"
+            row["game_id"] = _rebuild_gid_from_teams(season_i, week_i, away=away, home=home)
+            if base_row is not None:
+                for c in base_row.index:
+                    if "_pre_" in c and c in out_order:
+                        row[c] = base_row[c]
+            return row
+
+        rows.append(make_row(home, base_h))
+        rows.append(make_row(away, base_a))
+
+    pad_df = pd.DataFrame(rows)
+    for c in out_order:
+        if c not in pad_df.columns:
+            pad_df[c] = np.nan
+    pad_df = pad_df[out_order]
+
+    key_cols = ["season","week","team","game_id"]
+    merged = pd.concat([pregame, pad_df], ignore_index=True)
+    merged = merged.sort_values(["week","game_date","team","game_id"], kind="mergesort")
+    merged = merged.drop_duplicates(key_cols, keep="first")
+    return merged
 
 def build_pregame_current_season(target_season: int) -> pd.DataFrame:
     team_game = build_team_game_df(target_season)
@@ -298,10 +388,14 @@ def build_pregame_current_season(target_season: int) -> pd.DataFrame:
 
     pregame = pregame[ordered].copy()
 
-    # >>> Orden NUEVO: Week asc., luego fecha, luego team y game_id
+    # Orden consistente: Week asc., luego fecha, luego team y game_id
     pregame["game_date"] = pd.to_datetime(pregame["game_date"], errors="coerce")
     pregame["week"] = pd.to_numeric(pregame["week"], errors="coerce")
+
     pregame = pregame.sort_values(["week","game_date","team","game_id"], kind="mergesort").reset_index(drop=True)
+
+    # Acolchona la próxima semana con calendario de odds (si existe)
+    pregame = _pad_next_week_from_odds(pregame, season=target_season, out_order=ordered)
 
     return pregame
 
