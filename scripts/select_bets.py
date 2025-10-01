@@ -7,7 +7,8 @@ select_bets.py (pregame staking only)
 - Une con odds actuales (data/live/odds.csv) solo para temporada target.
 - Calcula EV/edge, aplica estrategia con filtros más estrictos y planifica stake pregame
   (Kelly fraccional + caps). NUNCA usa 'won' ni resultados. Bankroll SIEMPRE = INITIAL_BANKROLL.
-- Exporta apuestas seleccionadas y stake a data/live/bets.csv
+- Exporta apuestas seleccionadas y stake a data/live/bets.csv en modo APPEND-ONLY
+  (no modifica lo ya escrito; solo agrega picks nuevos), preservando columnas agregadas por otros scripts.
 """
 
 import os, re, warnings
@@ -318,7 +319,6 @@ def run_model(master_all: pd.DataFrame, target_season: int):
     # y labels
     y_train = train_df["home_win"].dropna().astype(int).values
     y_val   = val_df["home_win"].dropna().astype(int).values
-    dprint("run_model: y_train len:", len(y_train), "| y_val len:", len(y_val))
 
     # X
     X_train = train_df[feat_cols].copy()
@@ -327,7 +327,6 @@ def run_model(master_all: pd.DataFrame, target_season: int):
 
     train_meds = X_train.median(numeric_only=True)
     X_train = X_train.fillna(train_meds); X_val = X_val.fillna(train_meds); X_test = X_test.fillna(train_meds)
-    dprint("run_model: X shapes:", X_train.shape, X_val.shape, X_test.shape)
 
     # Monotonicidad (home_line negativa)
     monotonic_cst = [(-1 if c == "home_line" else 0) for c in feat_cols]
@@ -338,13 +337,11 @@ def run_model(master_all: pd.DataFrame, target_season: int):
         validation_fraction=0.15, n_iter_no_change=40,
         monotonic_cst=monotonic_cst, random_state=42
     )
-    dprint("run_model: fitting HGB...")
     hgb.fit(X_train, y_train)
 
     p_tr = hgb.predict_proba(X_train)[:,1]
     p_va = hgb.predict_proba(X_val)[:,1]
     p_te = hgb.predict_proba(X_test)[:,1] if len(X_test) else np.array([])
-    dprint("run_model: raw preds lens -> train/val/test:", len(p_tr), len(p_va), len(p_te))
 
     # Calibración (global + por bins si hay soporte)
     bin_edges = [-21, -10.5, -6.5, -3.5, -0.5, 0.5, 3.5, 6.5, 10.5, 21]
@@ -353,7 +350,7 @@ def run_model(master_all: pd.DataFrame, target_season: int):
     test_bins = cut_bins(test_df["home_line"]) if len(test_df) else pd.Series(dtype="category")
 
     iso_global = IsotonicRegression(out_of_bounds="clip")
-    iso_global.fit(p_va, y_val); dprint("run_model: fitted iso_global.")
+    iso_global.fit(p_va, y_val)
 
     bin_min = 120
     iso_by_bin = {}
@@ -362,7 +359,6 @@ def run_model(master_all: pd.DataFrame, target_season: int):
         if idx.sum() >= bin_min:
             iso = IsotonicRegression(out_of_bounds="clip")
             iso.fit(p_va[idx], y_val[idx]); iso_by_bin[b] = iso
-    dprint("run_model: bins with custom iso:", len(iso_by_bin))
 
     def apply_bin_calibration(p_raw, bins_series):
         if len(p_raw) == 0: return p_raw
@@ -376,11 +372,10 @@ def run_model(master_all: pd.DataFrame, target_season: int):
     p_tr_cal = iso_global.transform(p_tr)
     p_va_cal = apply_bin_calibration(p_va, val_bins)
     p_te_cal = apply_bin_calibration(p_te, test_bins)
-    dprint("run_model: calibrated preds lens -> train/val/test:", len(p_tr_cal), len(p_va_cal), len(p_te_cal))
 
     # Prior por spread y meta-LR
     prior_lr = LogisticRegression(C=2.0, solver="liblinear", max_iter=200)
-    prior_lr.fit(train_df[["home_line"]], y_train); dprint("run_model: fitted prior LR on home_line.")
+    prior_lr.fit(train_df[["home_line"]], y_train)
     p_tr_sp = prior_lr.predict_proba(train_df[["home_line"]])[:,1]
     p_va_sp = prior_lr.predict_proba(val_df[["home_line"]])[:,1]
     p_te_sp = prior_lr.predict_proba(test_df[["home_line"]])[:,1] if len(test_df) else np.array([])
@@ -401,34 +396,24 @@ def run_model(master_all: pd.DataFrame, target_season: int):
 
     meta_lr = LogisticRegression(C=1.0, solver="liblinear", max_iter=300)
     meta_lr.fit(meta_val, y_val)
-    dprint("run_model: fitted meta LR. meta shapes ->", meta_tr.shape, meta_val.shape, meta_test.shape)
 
     p_te_meta = (np.clip(meta_lr.predict_proba(meta_test)[:,1], 1e-6, 1-1e-6)
                  if len(meta_test) else np.array([]))
-    dprint("run_model: p_te_meta len:", len(p_te_meta))
 
     # Métricas comparables (entrenamiento/validación)
-    acc_tr  = accuracy_score(y_train, (p_tr_cal >= 0.5).astype(int))
-    auc_tr  = roc_auc_score(y_train, p_tr_cal)
-    ll_tr   = log_loss(y_train, p_tr_cal)
-    acc_va  = accuracy_score(y_val, (p_va_cal >= 0.5).astype(int))
-    auc_va  = roc_auc_score(y_val, p_va_cal)
-    ll_va   = log_loss(y_val, p_va_cal)
-
     dprint("\n[DBG Metrics]")
-    dprint(f"train | ACC {acc_tr:.3f} | ROC_AUC {auc_tr:.3f} | LOGLOSS {ll_tr:.3f}")
-    dprint(f"val   | ACC {acc_va:.3f} | ROC_AUC {auc_va:.3f} | LOGLOSS {ll_va:.3f}")
+    dprint(f"train | ACC {accuracy_score(y_train, (p_tr_cal >= 0.5).astype(int)):.3f} | "
+           f"ROC_AUC {roc_auc_score(y_train, p_tr_cal):.3f} | LOGLOSS {log_loss(y_train, p_tr_cal):.3f}")
+    dprint(f"val   | ACC {accuracy_score(y_val, (p_va_cal >= 0.5).astype(int)):.3f} | "
+           f"ROC_AUC {roc_auc_score(y_val, p_va_cal):.3f} | LOGLOSS {log_loss(y_val, p_va_cal):.3f}")
     dprint("test  | pregame only (no labels, no results)")
 
     # Preds para temporada target
+    test_df = test_df.copy()
+    test_df["week_label"] = test_df["week"].apply(week_label_from_num)
     test_preds = test_df[["season","week","week_label","home_team","away_team"]].copy()
-    if "home_win" in test_df.columns:
-        # no usamos 'home_win', pero si existe la colocamos aparte para depurar
-        pass
     test_preds["p_home_win_lr_cal"] = p_te_cal
     test_preds["p_home_win_meta"]   = p_te_meta
-    dprint("run_model: test_preds shape:", test_preds.shape)
-
     return test_preds
 
 # ----------------------------
@@ -596,25 +581,16 @@ def plan_pregame_stakes(bets_in: pd.DataFrame, cfg):
     data = add_week_order(bets_in).sort_values(["week_order","schedule_date","game_id"]).reset_index(drop=True)
 
     BK0 = cfg["INITIAL_BANKROLL"]
-    stakes, bk_view = [], []
+    stakes = []
 
-    for wk, g in data.groupby("week_label", sort=False):
-        # calcular stake con BK0 y cap semanal
-        if cfg["WEEKLY_CAP_PCT"] >= 0.999:
-            g_stakes = [kelly_stake(BK0, float(r["model_prob"]), float(r["decimal_odds"]), float(r["edge"]), cfg)
-                        for _, r in g.iterrows()]
-        else:
-            g_stakes = stake_week_with_cap(g, BK0, cfg)
-
-        stakes.extend(g_stakes)
-        bk_view.extend([BK0]*len(g))  # SIEMPRE el mismo bankroll mostrado (no se mueve)
+    for _, r in data.iterrows():
+        stakes.append(kelly_stake(BK0, float(r["model_prob"]), float(r["decimal_odds"]), float(r["edge"]), cfg))
 
     out = data.copy()
     out["stake"] = np.round(stakes, 2)
     out["profit"] = np.nan
     out["bankroll"] = float(BK0)
 
-    # Resumen por semana (solo planificación)
     wk_summary = (out.groupby("week_label", sort=False)
                     .agg(stake=("stake","sum"))
                     .reset_index())
@@ -628,6 +604,75 @@ def plan_pregame_stakes(bets_in: pd.DataFrame, cfg):
     }
     dprint("plan_pregame_stakes: summary ->", summary)
     return out, wk_summary, summary
+
+# ----------------------------
+# Append-only helpers
+# ----------------------------
+APPEND_KEYS = ["season","week","game_id","side"]
+
+def append_only_merge(existing: pd.DataFrame, new_rows: pd.DataFrame, cfg) -> pd.DataFrame:
+    """
+    Mantiene 'existing' tal cual (con todas sus columnas actuales).
+    Agrega solo filas de 'new_rows' cuyo (season, week, game_id, side) no exista.
+    Respeta cap semanal remanente: escala stakes de los NUEVOS si rebasan el cap.
+    Preserva la UNIÓN de columnas (existing ∪ new_rows) sin recortarlas.
+    """
+    if existing is None or existing.empty:
+        return new_rows.copy()
+
+    # Normaliza tipos y week_label (si faltara)
+    for c in ("season","week"):
+        if c in existing.columns:
+            existing[c] = pd.to_numeric(existing[c], errors="coerce").astype("Int64")
+    if "week_label" not in existing.columns and "week" in existing.columns:
+        existing["week_label"] = existing["week"].apply(week_label_from_num)
+
+    # Claves ya existentes
+    have = set(map(tuple, existing[APPEND_KEYS].astype(object).to_numpy().tolist())) if not existing.empty else set()
+    new_key_list = list(map(tuple, new_rows[APPEND_KEYS].astype(object).to_numpy().tolist()))
+    mask_new = ~pd.Series(new_key_list).isin(have)
+    only_new = new_rows[mask_new.values].copy()
+
+    if only_new.empty:
+        dprint("append_only_merge: no hay filas nuevas; devolviendo existing sin cambios.")
+        return existing.copy()
+
+    # Cap semanal remanente (solo afecta a nuevos)
+    BK0   = cfg["INITIAL_BANKROLL"]
+    CAP_W = BK0 * cfg["WEEKLY_CAP_PCT"]
+    out_chunks = []
+
+    for wk, g_new in only_new.groupby("week_label", sort=False):
+        exist_sum = float(existing.loc[existing["week_label"].astype(str).eq(str(wk)), "stake"].fillna(0).sum()) if "stake" in existing.columns else 0.0
+        remain = max(0.0, CAP_W - exist_sum)
+        new_sum = float(g_new["stake"].fillna(0).sum()) if "stake" in g_new.columns else 0.0
+        if new_sum > 0 and remain < new_sum:
+            scale = max(0.0, min(1.0, remain / new_sum))
+            dprint(f"append_only_merge: week {wk} scaling new stakes by {scale:.3f} (remain={remain:.2f}, new_sum={new_sum:.2f})")
+            g_new["stake"] = (g_new["stake"] * scale).apply(lambda x: float(np.floor(x*100)/100.0))
+        out_chunks.append(g_new)
+
+    only_new_scaled = pd.concat(out_chunks, ignore_index=True) if out_chunks else only_new
+
+    # === Unión de columnas: preserva todo lo existente y suma las nuevas ===
+    cols_existing = list(existing.columns)
+    cols_new = list(only_new_scaled.columns)
+    all_cols = cols_existing + [c for c in cols_new if c not in cols_existing]
+
+    # Alinear dataframes a la unión de columnas
+    for c in all_cols:
+        if c not in existing.columns:
+            existing[c] = pd.NA
+        if c not in only_new_scaled.columns:
+            only_new_scaled[c] = pd.NA
+
+    existing = existing[all_cols]
+    only_new_scaled = only_new_scaled[all_cols]
+
+    # Concat: lo viejo (idéntico) + lo nuevo (al final)
+    combined = pd.concat([existing, only_new_scaled], ignore_index=True)
+
+    return combined
 
 # ----------------------------
 # Main
@@ -675,7 +720,6 @@ def main():
                 tmp["home_win"] = (pd.to_numeric(tmp["score_home"], errors="coerce")
                                   > pd.to_numeric(tmp["score_away"], errors="coerce")).astype("Int64")
             hist_frames.append(tmp)
-            dprint(f"odds season {y} shape:", tmp.shape)
 
     master_hist = pd.DataFrame()
     if hist_frames:
@@ -702,11 +746,9 @@ def main():
     merge_df = master_target[[c for c in need_cols if c in master_target.columns]].copy()
     if "week_label" not in merge_df.columns:
         merge_df["week_label"] = merge_df["week"].apply(week_label_from_num)
-    dprint("merge_df (odds target) shape:", merge_df.shape)
 
     pred = test_preds[["season","week","home_team","away_team","p_home_win_meta"]].copy()
     dfm  = merge_df.merge(pred, on=cols_key, how="inner")
-    dprint("dfm (odds+preds) shape:", dfm.shape)
 
     # EV home/away
     homes = pd.DataFrame({
@@ -724,7 +766,6 @@ def main():
         "model_prob": 1.0 - dfm["p_home_win_meta"]
     })
     ev_predictions = pd.concat([homes, aways], ignore_index=True)
-    dprint("ev_predictions (home+away) shape:", ev_predictions.shape)
 
     # Completar ML si falta
     if "ml" in ev_predictions.columns and "decimal_odds" in ev_predictions.columns:
@@ -733,7 +774,6 @@ def main():
 
     ev_predictions = ev_predictions[pd.to_numeric(ev_predictions["decimal_odds"], errors="coerce").notna()].copy()
     ev_predictions["decimal_odds"] = ev_predictions["decimal_odds"].astype(float)
-    dprint("ev_predictions after dropna(decimal_odds) shape:", ev_predictions.shape)
 
     # EV / edge
     ev_predictions["ev"]   = ev_predictions["model_prob"]*(ev_predictions["decimal_odds"]-1) - (1-ev_predictions["model_prob"])
@@ -743,7 +783,6 @@ def main():
     ev_base = sanitize_ev(ev_predictions, CFG)
     ev_base["game_id"] = ev_base.apply(lambda r: make_game_id_row(r["week_label"], r["team"], r["opponent"]), axis=1)
     ev_devig = devig_per_game(ev_base.copy(), single_side_mode=CFG["DEVIG_SINGLE_SIDE"])
-    dprint("ev_devig shape:", ev_devig.shape)
 
     p = ev_devig["model_prob"].astype(float)
     d = ev_devig["decimal_odds"].astype(float)
@@ -751,38 +790,34 @@ def main():
     ev_devig["edge"] = p - mkt
     ev_devig["ev"]   = p*(d-1) - (1-p)
 
-    # Embudo de verificación
-    total_games = ev_predictions.assign(game_id=ev_predictions.apply(
-                        lambda r: make_game_id_row(week_label_from_num(int(r["week"])) if "week_label" not in ev_predictions.columns else r["week_label"],
-                                                   r["team"] if "team" in ev_predictions.columns else r["home_team"],
-                                                   r["opponent"] if "opponent" in ev_predictions.columns else r["away_team"]),
-                        axis=1)).drop_duplicates("game_id").shape[0]
-    after_basic = ev_base.drop_duplicates("game_id").shape[0]
-    pre_top = ev_devig.shape[0]
-    dprint(f"FUNNEL -> games_total={total_games} | after_basic_filters={after_basic} | rows_after_devig={pre_top}")
-
     cand = pick_per_game_best(ev_devig, CFG)
-    dprint("cand (picked bets) shape:", cand.shape)
 
     # --------- PLAN PREGAME (sin resultados) ----------
     planned_bets, weekly_plan, S = plan_pregame_stakes(cand, CFG)
-    dprint("weekly_plan shape:", weekly_plan.shape if isinstance(weekly_plan, pd.DataFrame) else None,
-           "| planning summary:", S)
 
-    # Orden/columnas finales
+    # Final de ESTA corrida (columnas mínimas que generamos ahora)
     planned_bets = add_week_order(planned_bets)
-    final_cols = [
-        "season","week","week_label","schedule_date","side","team","opponent",
-        "decimal_odds","ml","market_prob_nv","model_prob","ev","edge",
-        "week_order","game_id","stake","profit","bankroll"
-    ]
-    for c in final_cols:
-        if c not in planned_bets.columns:
-            planned_bets[c] = pd.NA
-    planned_bets = planned_bets[final_cols].copy()
 
-    planned_bets.to_csv(BETS_OUT_PATH, index=False)
-    print(f"[select_bets] wrote {BETS_OUT_PATH} | rows={len(planned_bets)} | season={target_season}")
+    # ----------------------------
+    # APPEND-ONLY WRITE (preservando columnas existentes)
+    # ----------------------------
+    if os.path.exists(BETS_OUT_PATH):
+        try:
+            existing = pd.read_csv(BETS_OUT_PATH, low_memory=False)
+            if "schedule_date" in existing.columns:
+                existing["schedule_date"] = pd.to_datetime(existing["schedule_date"], errors="coerce", utc=True)
+            if "week_label" not in existing.columns and "week" in existing.columns:
+                existing["week_label"] = existing["week"].apply(week_label_from_num)
+        except Exception as e:
+            dprint("WARN: no se pudo leer bets.csv existente, se sobrescribirá. err:", e)
+            existing = pd.DataFrame()
+    else:
+        existing = pd.DataFrame()
+
+    combined = append_only_merge(existing, planned_bets, CFG)
+
+    combined.to_csv(BETS_OUT_PATH, index=False)
+    print(f"[select_bets] append-only wrote {BETS_OUT_PATH} | prev_rows={len(existing)} | new_added={len(combined)-len(existing)} | total={len(combined)} | season={target_season}")
 
 if __name__ == "__main__":
     main()
