@@ -4,26 +4,16 @@ on:
   workflow_dispatch: {}
   schedule:
     # TNF (Thursday Night Football)
-    # Viernes 00–06 UTC  ≈ Jueves 8:00 PM–2:00 AM ET
     - cron: "*/5 0-6 * * 5"
-
-    # Juegos internacionales del domingo (London/Frankfurt)
-    # Domingo 13–16 UTC ≈ 9:00 AM–12:00 PM ET
+    # London/Frankfurt (domingo temprano)
     - cron: "*/5 13-16 * * 0"
-
-    # Ventanas del domingo SIN huecos (1 PM y 4:05/4:25 PM ET)
-    # Domingo 17–23 UTC ≈ 1:00 PM–7:59 PM ET
+    # Ventanas del domingo
     - cron: "*/5 17-23 * * 0"
-
-    # SNF (Sunday Night Football) + buffer de OT/retrasos
-    # Lunes 00–05 UTC ≈ Domingo 8:00 PM–12:59 AM ET
+    # SNF + buffer
     - cron: "*/5 0-5 * * 1"
-
-    # MNF (Monday Night Football) + buffer
-    # Martes 00–06 UTC ≈ Lunes 8:00 PM–1:59 AM ET
+    # MNF + buffer
     - cron: "*/5 0-6 * * 2"
-
-    # EXTRA: Lunes 23:30 UTC (último persist antes de la siguiente semana)
+    # EXTRA: Lunes 23:30 UTC
     - cron: "30 23 * * 1"
 
 permissions:
@@ -64,6 +54,7 @@ jobs:
             git push
           else
             echo "No changes to commit (persist)."
+          fi
 
   annotate-bets:
     name: 2) Annotate bets (profit & bankroll per week)
@@ -102,6 +93,7 @@ jobs:
             git push
           else
             echo "No changes to commit (annotate)."
+          fi
 
   build-pnl:
     name: 3) Build P&L (weekly final-only)
@@ -124,11 +116,8 @@ jobs:
 
       - name: Build PnL (live)
         env:
-          # Anchor con el que arrancaste la season (Week 3 = $1000, por ejemplo)
           BANKROLL_INITIAL: "1000"
-          # Si tus CSV viven en otra ruta, puedes sobreescribir con:
-          # BPNL_BETS_CSV: "data/live/bets.csv"
-          # BPNL_ODDS_CSV: "data/live/odds.csv"
+          # BPNL_BETS_CSV / BPNL_ODDS_CSV si usas rutas custom
         run: |
           set -euxo pipefail
           python scripts/build_pnl_live.py
@@ -144,3 +133,4 @@ jobs:
             git push
           else
             echo "No changes to commit (pnl)."
+          fi
