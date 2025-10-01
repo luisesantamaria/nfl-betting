@@ -13,14 +13,10 @@ on:
     - cron: "0 6 * * 3"
   workflow_dispatch:
     inputs:
-      # usados por build_live_pregame_stats (opcional)
-      season:
-        description: "Override season (optional)"
-        required: false
+      # (opcional) para mover semana manualmente si lo necesitas
       week:
         description: "Override week (optional)"
         required: false
-      # usados por fetch_odds
       week_shift:
         description: "Shift target week by N (e.g., 1 = next week)"
         required: false
@@ -35,7 +31,7 @@ on:
         default: "1.022"
 
 jobs:
-  # 1) Live pregame stats (current season)
+  # 1) Live pregame stats (autodetecta temporada internamente)
   live_pregame_stats:
     runs-on: ubuntu-latest
     steps:
@@ -50,10 +46,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy requests pyarrow fastparquet
 
-      - name: Build pregame stats (current season)
-        env:
-          # Si quieres autodetectar por año ET, elimina la línea TARGET_SEASON.
-          TARGET_SEASON: "${{ github.event.inputs.season }}"
+      - name: Build pregame stats (auto season)
         run: |
           python scripts/build_live_pregame_stats.py
           echo "--- data/live ---"; ls -lah data/live || true
@@ -71,7 +64,7 @@ jobs:
             echo "No changes to commit."
           fi
 
-  # 2) Update odds (next/current week)
+  # 2) Update odds (autodetecta temporada; semana actual/próxima según flags)
   update_odds:
     runs-on: ubuntu-latest
     needs: [live_pregame_stats]
@@ -131,15 +124,13 @@ PY
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           PF_INPUT: ${{ github.event.inputs.price_factor }}
-          SEASON: ${{ github.event.inputs.season }}
           WEEK: ${{ github.event.inputs.week }}
           WEEK_SHIFT_INPUT: ${{ github.event.inputs.week_shift }}
           ARCHIVE_FORCE: ${{ github.event.inputs.archive_force }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euxo pipefail
-          echo "SEASON override: ${SEASON:-<none>}"
-          echo "WEEK   override: ${WEEK:-<none>}"
+          echo "WEEK override: ${WEEK:-<none>}"
           echo "ARCHIVE_FORCE: ${ARCHIVE_FORCE:-false}"
           if [ -z "${PF_INPUT:-}" ]; then PF_INPUT="1.022"; fi
           WEEK_SHIFT="1"
@@ -151,7 +142,6 @@ PY
             --only-current-week \
             --price-factor "$PF_INPUT" \
             --week-shift "$WEEK_SHIFT" \
-            ${SEASON:+--season "$SEASON"} \
             ${WEEK:+--week "$WEEK"} \
             $( [ "${ARCHIVE_FORCE:-false}" = "true" ] && echo "--archive-force" )
 
@@ -177,7 +167,7 @@ PY
           git commit -m "chore(data): refresh odds live [skip ci]" || echo "no changes"
           git push
 
-  # 3) Generate bets (uses live stats + live odds)
+  # 3) Generate bets (usa live stats + live odds; temporada auto)
   generate_bets:
     runs-on: ubuntu-latest
     needs: [update_odds]
@@ -203,13 +193,10 @@ PY
 
       - name: Export envs (only if non-empty)
         run: |
-          if [ -n "${{ github.event.inputs.season }}" ]; then
-            echo "TARGET_SEASON=${{ github.event.inputs.season }}" >> $GITHUB_ENV
-          fi
+          # Ya no pasamos TARGET_SEASON: la temporada se autodetecta
           if [ -n "${{ github.event.inputs.week }}" ]; then
             echo "TARGET_WEEK=${{ github.event.inputs.week }}" >> $GITHUB_ENV
           fi
-          echo "Exported TARGET_SEASON=${TARGET_SEASON:-<auto>}"
           echo "Exported TARGET_WEEK=${TARGET_WEEK:-<auto>}"
 
       - name: Run select_bets
