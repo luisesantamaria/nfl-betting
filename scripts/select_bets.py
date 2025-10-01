@@ -822,91 +822,97 @@ def main():
     ev_devig["edge"] = p - mkt
     ev_devig["ev"]   = p*(d-1) - (1-p)
 
-    # === AUDIT DIAGNÓSTICO (siempre activado) =================
+        # === AUDIT DIAGNÓSTICO (siempre activado) =================
     try:
         aud = ev_devig.copy()
 
-    # Asegurar tipos/columnas mínimas
-    if "schedule_date" in aud.columns:
-        aud["schedule_date"] = pd.to_datetime(aud["schedule_date"], errors="coerce", utc=True)
-    else:
-        aud["schedule_date"] = pd.NaT
+        # Asegurar tipos/columnas mínimas
+        if "schedule_date" in aud.columns:
+            aud["schedule_date"] = pd.to_datetime(aud["schedule_date"], errors="coerce", utc=True)
+        else:
+            aud["schedule_date"] = pd.NaT
 
-    required_cols = ["decimal_odds","model_prob","market_prob_nv","edge","ev","week_label","team","opponent","side","game_id"]
-    for c in required_cols:
-        if c not in aud.columns:
-            aud[c] = np.nan
+        required_cols = ["decimal_odds","model_prob","market_prob_nv","edge","ev",
+                         "week_label","team","opponent","side","game_id"]
+        for c in required_cols:
+            if c not in aud.columns:
+                aud[c] = np.nan
 
-    # Confianza = |p - 0.5|
-    aud["conf"] = (aud["model_prob"].astype(float) - 0.5).abs()
+        # Confianza = |p - 0.5|
+        aud["conf"] = (aud["model_prob"].astype(float) - 0.5).abs()
 
-    # Umbrales actuales (se verán reflejados en la auditoría)
-    tau         = float(CFG.get("EDGE_TAU", 0.06))
-    conf_min    = float(CFG.get("CONF_MIN", 0.09))
-    ev_base_min = float(CFG.get("EV_BASE_MIN", 0.012))
+        # Umbrales actuales (se verán reflejados en la auditoría)
+        tau         = float(CFG.get("EDGE_TAU", 0.06))
+        conf_min    = float(CFG.get("CONF_MIN", 0.09))
+        ev_base_min = float(CFG.get("EV_BASE_MIN", 0.012))
 
-    # EV floor por fila (según bandas/pendiente)
-    def _ev_floor_row(r):
-        return ev_floor(float(r["decimal_odds"]), ev_base_min, ev_slope_for_row(r, CFG))
+        # EV floor por fila (según bandas/pendiente)
+        def _ev_floor_row(r):
+            return ev_floor(float(r["decimal_odds"]), ev_base_min, ev_slope_for_row(r, CFG))
 
-    aud["EV_floor"] = aud.apply(_ev_floor_row, axis=1)
+        aud["EV_floor"] = aud.apply(_ev_floor_row, axis=1)
 
-    # Flags de falla
-    aud["fail_edge"] = aud["edge"].astype(float) < tau
-    aud["fail_conf"] = aud["conf"].astype(float) < conf_min
-    aud["fail_ev"]   = aud["ev"].astype(float)   < aud["EV_floor"].astype(float)
+        # Flags de falla
+        aud["fail_edge"] = aud["edge"].astype(float) < tau
+        aud["fail_conf"] = aud["conf"].astype(float) < conf_min
+        aud["fail_ev"]   = aud["ev"].astype(float)   < aud["EV_floor"].astype(float)
 
-    # Orden legible
-    aud_disp = (aud[[
-        "week_label","schedule_date","game_id","side","team","opponent",
-        "decimal_odds","model_prob","market_prob_nv","edge","conf","ev","EV_floor",
-        "fail_edge","fail_conf","fail_ev"
-    ]].sort_values(["week_label","schedule_date","game_id","side"], ascending=[True, True, True, True])
-      .reset_index(drop=True))
+        # Orden legible
+        aud_disp = (
+            aud[
+                ["week_label","schedule_date","game_id","side","team","opponent",
+                 "decimal_odds","model_prob","market_prob_nv","edge","conf","ev","EV_floor",
+                 "fail_edge","fail_conf","fail_ev"]
+            ]
+            .sort_values(["week_label","schedule_date","game_id","side"], ascending=[True, True, True, True])
+            .reset_index(drop=True)
+        )
 
-    # Dump completo (todos los juegos con métricas y flags)
-    print("[AUDIT] Dump de TODOS los juegos (con métricas y flags):")
-    with pd.option_context("display.max_rows", 300, "display.max_columns", 50, "display.width", 200):
-        print(aud_disp)
+        # Dump completo (todos los juegos con métricas y flags)
+        print("[AUDIT] Dump de TODOS los juegos (con métricas y flags):")
+        with pd.option_context("display.max_rows", 300, "display.max_columns", 50, "display.width", 200):
+            print(aud_disp)
 
-    # Near-misses: muy cerca de pasar
-    near = aud.copy()
-    near["near_edge"] = near["edge"].astype(float) >= (tau * 0.85)
-    near["near_conf"] = near["conf"].astype(float) >= (conf_min * 0.85)
-    near["near_ev"]   = near["ev"].astype(float)   >= (near["EV_floor"].astype(float) * 0.85)
-    near_miss = near[(near["near_edge"] | near["near_conf"] | near["near_ev"])
-                     & (near["fail_edge"] | near["fail_conf"] | near["fail_ev"])]
-    near_miss = near_miss.sort_values(
-        ["week_label","schedule_date","game_id","edge","ev"],
-        ascending=[True, True, True, False, False]
-    )
+        # Near-misses: muy cerca de pasar
+        near = aud.copy()
+        near["near_edge"] = near["edge"].astype(float) >= (tau * 0.85)
+        near["near_conf"] = near["conf"].astype(float) >= (conf_min * 0.85)
+        near["near_ev"]   = near["ev"].astype(float)   >= (near["EV_floor"].astype(float) * 0.85)
+        near_miss = near[
+            (near["near_edge"] | near["near_conf"] | near["near_ev"]) &
+            (near["fail_edge"] | near["fail_conf"] | near["fail_ev"])
+        ].sort_values(
+            ["week_label","schedule_date","game_id","edge","ev"],
+            ascending=[True, True, True, False, False]
+        )
 
-    if not near_miss.empty:
-        print("[AUDIT] Near-misses (candidatos que casi pasan) — top 12:")
-        with pd.option_context("display.max_rows", 200, "display.max_columns", 50, "display.width", 200):
-            print(near_miss[[
-                "week_label","schedule_date","game_id","side","team","opponent",
-                "decimal_odds","model_prob","market_prob_nv","edge","conf","ev","EV_floor",
-                "fail_edge","fail_conf","fail_ev","near_edge","near_conf","near_ev"
-            ]].head(12))
-    else:
-        print("[AUDIT] Near-misses: (ninguno)")
+        if not near_miss.empty:
+            print("[AUDIT] Near-misses (candidatos que casi pasan) — top 12:")
+            with pd.option_context("display.max_rows", 200, "display.max_columns", 50, "display.width", 200):
+                print(near_miss[
+                    ["week_label","schedule_date","game_id","side","team","opponent",
+                     "decimal_odds","model_prob","market_prob_nv","edge","conf","ev","EV_floor",
+                     "fail_edge","fail_conf","fail_ev","near_edge","near_conf","near_ev"]
+                ].head(12))
+        else:
+            print("[AUDIT] Near-misses: (ninguno)")
 
-    # Resumen de por qué se caen
-    fails = aud[["fail_edge","fail_conf","fail_ev"]].copy()
-    total = len(fails)
-    if total > 0:
-        n_edge = int(fails["fail_edge"].sum())
-        n_conf = int(fails["fail_conf"].sum())
-        n_ev   = int(fails["fail_ev"].sum())
-        print(f"[AUDIT] Resumen de caídas (sobre {total} lados evaluados): "
-              f"edge {n_edge}, conf {n_conf}, ev {n_ev}")
-    else:
-        print("[AUDIT] Resumen de caídas: (no hay filas evaluadas)")
+        # Resumen de por qué se caen
+        fails = aud[["fail_edge","fail_conf","fail_ev"]].copy()
+        total = len(fails)
+        if total > 0:
+            n_edge = int(fails["fail_edge"].sum())
+            n_conf = int(fails["fail_conf"].sum())
+            n_ev   = int(fails["fail_ev"].sum())
+            print(f"[AUDIT] Resumen de caídas (sobre {total} lados evaluados): "
+                  f"edge {n_edge}, conf {n_conf}, ev {n_ev}")
+        else:
+            print("[AUDIT] Resumen de caídas: (no hay filas evaluadas)")
 
     except Exception as e:
         print("[AUDIT] WARN: auditoría no pudo ejecutarse:", repr(e))
-# === FIN AUDIT =============================================
+    # === FIN AUDIT =============================================
+
 
 
     # Selección con relajación escalonada hasta mínimo
