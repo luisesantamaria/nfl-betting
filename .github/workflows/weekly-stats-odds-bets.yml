@@ -13,7 +13,6 @@ on:
     - cron: "0 6 * * 3"
   workflow_dispatch:
     inputs:
-      # (opcional) para mover semana manualmente si lo necesitas
       week:
         description: "Override week (optional)"
         required: false
@@ -31,26 +30,22 @@ on:
         default: "1.022"
 
 jobs:
-  # 1) Live pregame stats (autodetecta temporada internamente)
+  # 1) Live pregame stats
   live_pregame_stats:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install pandas numpy requests pyarrow fastparquet
-
       - name: Build pregame stats (auto season)
         run: |
           python scripts/build_live_pregame_stats.py
           echo "--- data/live ---"; ls -lah data/live || true
-
       - name: Commit & push YTD stats
         run: |
           set -e
@@ -64,7 +59,7 @@ jobs:
             echo "No changes to commit."
           fi
 
-  # 2) Update odds (autodetecta temporada; semana actual/próxima según flags)
+  # 2) Update odds
   update_odds:
     runs-on: ubuntu-latest
     needs: [live_pregame_stats]
@@ -73,53 +68,23 @@ jobs:
         with:
           persist-credentials: true
           fetch-depth: 0
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install pandas requests python-dateutil pytz
-
       - name: Ensure folders
         run: |
           mkdir -p data/live
           mkdir -p data/archive
-
       - name: Debug secret presence
         run: |
           if [ -z "${{ secrets.ODDS_API_KEY }}" ]; then
             echo "ODDS_API_KEY repo secret is NOT set."
             exit 1
           fi
-
-      # (Opcional) Smoke test: ventana de la PRÓXIMA semana (thu→thu)
-      - name: Smoke test Odds endpoint (optional)
-        continue-on-error: true
-        env:
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: |
-          set -eux
-          START=$(python - << 'PY'
-from datetime import datetime, timezone, timedelta
-now=datetime.now(timezone.utc)
-thu=now - timedelta(days=(now.weekday()-3)%7)
-s=(thu.replace(hour=0,minute=0,second=0,microsecond=0)+timedelta(days=7))
-print(s.strftime("%Y-%m-%dT%H:%M:%SZ"))
-PY
-)
-          END=$(python - << 'PY'
-from datetime import datetime, timezone, timedelta
-now=datetime.now(timezone.utc)
-thu=now - timedelta(days=(now.weekday()-3)%7)
-e=(thu.replace(hour=0,minute=0,second=0,microsecond=0)+timedelta(days=14))
-print(e.strftime("%Y-%m-%dT%H:%M:%SZ"))
-PY
-)
-          curl -sS "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds?regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&dateFormat=iso&commenceTimeFrom=${START}&commenceTimeTo=${END}&apiKey=${ODDS_API_KEY}" | head -c 1000
-
       - name: Fetch odds (next/current week) – The Odds API
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
@@ -143,19 +108,16 @@ PY
             --week-shift "$WEEK_SHIFT" \
             ${WEEK:+--week "$WEEK"} \
             $( [ "${ARCHIVE_FORCE:-false}" = "true" ] && echo "--archive-force" )
-
       - name: Show live odds
         run: |
           ls -lah data/live || true
           [ -f data/live/odds.csv ] && head -n 40 data/live/odds.csv || true
-
       - name: Upload artifact (odds-live)
         uses: actions/upload-artifact@v4
         with:
           name: odds-live-${{ github.run_id }}-${{ github.run_attempt }}
           path: data/live/odds.csv
           if-no-files-found: error
-
       - name: Commit & push odds
         run: |
           set -e
@@ -166,7 +128,7 @@ PY
           git commit -m "chore(data): refresh odds live [skip ci]" || echo "no changes"
           git push
 
-  # 3) Generate bets (usa live stats + live odds; temporada auto)
+  # 3) Generate bets
   generate_bets:
     runs-on: ubuntu-latest
     needs: [update_odds]
@@ -175,46 +137,37 @@ PY
         with:
           persist-credentials: true
           fetch-depth: 0
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install pandas numpy scikit-learn python-dateutil pytz
-
       - name: Ensure folders
         run: |
           mkdir -p data/live
           mkdir -p data/archive
-
       - name: Export envs (only if non-empty)
         run: |
-          # Ya no pasamos TARGET_SEASON: la temporada se autodetecta
           if [ -n "${{ github.event.inputs.week }}" ]; then
             echo "TARGET_WEEK=${{ github.event.inputs.week }}" >> $GITHUB_ENV
           fi
           echo "Exported TARGET_WEEK=${TARGET_WEEK:-<auto>}"
-
       - name: Run select_bets
         run: |
           set -e
           python scripts/select_bets.py
-
       - name: Show bets output
         run: |
           ls -lah data/live || true
           [ -f data/live/bets.csv ] && head -n 20 data/live/bets.csv || true
-
       - name: Upload artifact (bets-live)
         uses: actions/upload-artifact@v4
         with:
           name: bets-live-${{ github.run_id }}-${{ github.run_attempt }}
           path: data/live/bets.csv
           if-no-files-found: error
-
       - name: Commit & push bets.csv
         run: |
           set -e
