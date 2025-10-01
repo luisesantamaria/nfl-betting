@@ -1,4 +1,4 @@
-name: persist-scores
+name: persist-scores-pnl
 
 on:
   workflow_dispatch: {}
@@ -23,82 +23,124 @@ on:
     # Martes 00–06 UTC ≈ Lunes 8:00 PM–1:59 AM ET
     - cron: "*/5 0-6 * * 2"
 
-    # ÚLTIMO PERSIST de la semana
-    # Lunes 23:30 America/Mexico_City == Martes 05:30 UTC
-    - cron: "30 5 * * 2"
+    # EXTRA: Lunes 23:30 UTC (último persist antes de la siguiente semana)
+    - cron: "30 23 * * 1"
 
 permissions:
   contents: write
 
 jobs:
-  persist_scores_and_pnl:
+  persist-scores:
+    name: 1) Persist finished scores into odds
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install pandas numpy requests
+          pip install pandas requests numpy
 
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
 
-      # ===== 1) Persistir scores -> odds (equivalente a "odds" paso 1) =====
       - name: Persist finished scores into odds
         run: |
           set -euxo pipefail
           python scripts/persist_scores.py
-          echo "--- data/live after persist_scores ---"; ls -lah data/live || true
-          [ -f data/live/odds.csv ] && head -n 20 data/live/odds.csv || true
 
-      # ===== 2) Anotar bets con profit/bankroll (equivalente a "stats" paso 2) =====
-      # Importante: esto debe correr ANTES de construir PnL para que el PnL
-      # vea el profit/bankroll final por week cuando ya esté todo "final".
-      - name: Annotate bets with profit & bankroll (live)
-        env:
-          BANKROLL_INITIAL: "1000"
-        run: |
-          set -euxo pipefail
-          python scripts/annotate_bets_with_profit_and_bankroll.py
-          echo "--- data/live after annotate_bets ---"; ls -lah data/live || true
-          [ -f data/live/bets.csv ] && head -n 20 data/live/bets.csv || true
-
-      # ===== 3) Construir P&L desde bets (equivalente a "bets" paso 3) =====
-      - name: Build PnL (live) from bets
-        env:
-          BANKROLL_INITIAL: "1000"
-          # Opcional: si tus CSV viven en otra ruta, puedes sobreescribir con:
-          # BPNL_BETS_CSV: "data/live/bets.csv"
-          # BPNL_ODDS_CSV: "data/live/odds.csv"
-        run: |
-          set -euxo pipefail
-          python scripts/build_pnl_live.py
-          echo "--- data/live after build_pnl_live ---"; ls -lah data/live || true
-          [ -f data/live/pnl.csv ] && cat data/live/pnl.csv || true
-
-      - name: Commit & push
+      - name: Commit & push (persist)
         run: |
           set -e
           git config user.name  "github-actions"
           git config user.email "actions@github.com"
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "chore(scores): persist scores ➜ annotate bets ➜ build live PnL [skip ci]"
-            # pequeño retry por si hay carreras
-            for i in 1 2 3; do
-              git push && break || (echo "Push failed (try $i), pulling --rebase..." && git pull --rebase && sleep 2)
-            done
+            git commit -m "chore(scores): persist finished scores [skip ci]"
+            git push
           else
-            echo "No changes to commit."
-          fi
+            echo "No changes to commit (persist)."
+
+  annotate-bets:
+    name: 2) Annotate bets (profit & bankroll per week)
+    runs-on: ubuntu-latest
+    needs: persist-scores
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests numpy
+
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
+
+      - name: Annotate bets with profit & bankroll (live)
+        env:
+          BANKROLL_INITIAL: "1000"
+        run: |
+          set -euxo pipefail
+          python scripts/annotate_bets_with_profit_and_bankroll.py
+
+      - name: Commit & push (annotate)
+        run: |
+          set -e
+          git config user.name  "github-actions"
+          git config user.email "actions@github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(annotate): bets profit & bankroll (freeze finals) [skip ci]"
+            git push
+          else
+            echo "No changes to commit (annotate)."
+
+  build-pnl:
+    name: 3) Build P&L (weekly final-only)
+    runs-on: ubuntu-latest
+    needs: annotate-bets
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests numpy
+
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
+
+      - name: Build PnL (live)
+        env:
+          # Anchor con el que arrancaste la season (Week 3 = $1000, por ejemplo)
+          BANKROLL_INITIAL: "1000"
+          # Si tus CSV viven en otra ruta, puedes sobreescribir con:
+          # BPNL_BETS_CSV: "data/live/bets.csv"
+          # BPNL_ODDS_CSV: "data/live/odds.csv"
+        run: |
+          set -euxo pipefail
+          python scripts/build_pnl_live.py
+
+      - name: Commit & push (pnl)
+        run: |
+          set -e
+          git config user.name  "github-actions"
+          git config user.email "actions@github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(pnl): build weekly P&L (final weeks only) [skip ci]"
+            git push
+          else
+            echo "No changes to commit (pnl)."
