@@ -9,7 +9,7 @@ LIVE_BETS_FILE = Path("data/live/bets.csv")
 LIVE_ODDS_FILE = Path("data/live/odds.csv")
 
 INITIAL_BANKROLL = 1000.0
-FREEZE_FINAL_WEEKS = True  # <- NO tocar semanas con week_is_final == True
+FREEZE_FINAL_WEEKS = True  # <- NO tocar semanas "finales"
 
 TEAM_FIX = {
     "STL":"LA","LAR":"LA","SD":"LAC","SDG":"LAC","OAK":"LV","LVR":"LV","WSH":"WAS","JAC":"JAX",
@@ -128,16 +128,15 @@ def _load_live_odds() -> pd.DataFrame:
     return odds
 
 def _merge_scores_incomplete_weeks(bets: pd.DataFrame, odds: pd.DataFrame) -> pd.DataFrame:
-    """Completa scores solo para semanas NO finalizadas o filas sin result."""
+    """Completa scores y estatus solo para filas no finales (bets recibidas en 'bets')."""
     if bets.empty or odds.empty:
         return bets
     m = bets.merge(
         odds[["season","week","game_id","score_home","score_away"]],
         on=["season","week","game_id"], how="left"
     )
-    # Solo tocamos filas NO finales
-    not_final = ~m.get("week_is_final", pd.Series([False]*len(m))).astype(bool)
 
+    # NO usamos week_is_final aquí (estas son filas working, no finales)
     team_score_from_odds = np.where(
         m["side"].str.lower().eq("home"), m["score_home"],
         np.where(m["side"].str.lower().eq("away"), m["score_away"], np.nan)
@@ -147,42 +146,68 @@ def _merge_scores_incomplete_weeks(bets: pd.DataFrame, odds: pd.DataFrame) -> pd
         np.where(m["side"].str.lower().eq("away"), m["score_home"], np.nan)
     )
 
-    m.loc[not_final, "team_score"] = m.loc[not_final, "team_score"].where(
-        m.loc[not_final, "team_score"].notna(), team_score_from_odds[not_final]
-    )
-    m.loc[not_final, "opponent_score"] = m.loc[not_final, "opponent_score"].where(
-        m.loc[not_final, "opponent_score"].notna(), opp_score_from_odds[not_final]
-    )
+    # Completar solo donde falte
+    m["team_score"] = m["team_score"].where(m["team_score"].notna(), team_score_from_odds)
+    m["opponent_score"] = m["opponent_score"].where(m["opponent_score"].notna(), opp_score_from_odds)
 
     has_scores = m["team_score"].notna() & m["opponent_score"].notna()
-    needs_status = not_final & has_scores & m["status"].isna()
-    needs_short  = not_final & has_scores & m["status_short"].isna()
+    needs_status = has_scores & m["status"].isna()
+    needs_short  = has_scores & m["status_short"].isna()
     m.loc[needs_status, "status"] = "FINAL"
     m.loc[needs_short,  "status_short"] = "Final"
 
     return m.drop(columns=["score_home","score_away"], errors="ignore")
 
+def _derive_week_is_final_from_bets(bets_now: pd.DataFrame) -> pd.DataFrame:
+    """Crea/actualiza week_is_final en bets: True si TODAS las bets de la semana tienen profit no nulo."""
+    out = bets_now.copy()
+    if "profit" not in out.columns:
+        out["profit"] = np.nan
+    out["profit_num"] = pd.to_numeric(out["profit"], errors="coerce")
+
+    week_keys = ["season","week","week_label"]
+    for k in week_keys:
+        if k not in out.columns:
+            raise RuntimeError(f"Columna requerida ausente en bets: {k}")
+
+    wk_final_df = (
+        out.groupby(week_keys, dropna=False)["profit_num"]
+           .apply(lambda s: s.notna().all())
+           .reset_index()
+           .rename(columns={"profit_num": "week_is_final"})
+    )
+    out = out.merge(wk_final_df, on=week_keys, how="left")
+    out.drop(columns=["profit_num"], inplace=True, errors="ignore")
+    return out
+
 def _process_live_freezing(bets_now: pd.DataFrame, odds: pd.DataFrame) -> pd.DataFrame:
     """Procesa SOLO semanas abiertas; conserva semanas finalizadas tal cual."""
     if bets_now.empty:
+        print("[annotate] No hay bets; nada que hacer.")
         return bets_now
 
     bets_now = _ensure_cols(bets_now)
     bets_now = _prepare_bets(bets_now)
 
+    # === Derivar semana final desde bets (TODAS las bets con profit no nulo) ===
+    bets_now = _derive_week_is_final_from_bets(bets_now)
+
     # Snapshot de filas finales para no tocarlas
-    if FREEZE_FINAL_WEEKS and "week_is_final" in bets_now.columns:
-        mask_final = bets_now["week_is_final"].astype(bool).fillna(False)
+    if FREEZE_FINAL_WEEKS:
+        mask_final = bets_now["week_is_final"].fillna(False).astype(bool)
     else:
         mask_final = pd.Series([False]*len(bets_now), index=bets_now.index)
 
     frozen_df = bets_now.loc[mask_final].copy()
     working_df = bets_now.loc[~mask_final].copy()
 
+    print(f"[annotate] Semanas finales congeladas: {sorted(frozen_df['week_label'].dropna().unique().tolist())}")
+    print(f"[annotate] Semanas abiertas a procesar: {sorted(working_df['week_label'].dropna().unique().tolist())}")
+
     # Completa scores y estatus SOLO en working_df
     working_df = _merge_scores_incomplete_weeks(working_df, odds)
 
-    # Flags
+    # Flags por fila
     has_final_status = working_df.get("status", pd.Series([""]*len(working_df), index=working_df.index)).astype(str).str.upper().eq("FINAL")
     has_scores = working_df["team_score"].notna() & working_df["opponent_score"].notna()
     is_final_row = has_final_status | has_scores
@@ -198,14 +223,14 @@ def _process_live_freezing(bets_now: pd.DataFrame, odds: pd.DataFrame) -> pd.Dat
     needs_short  = has_scores & working_df["status_short"].isna()
     working_df.loc[needs_short,  "status_short"] = "Final"
 
-    # Orden para carrera
+    # Orden para corrida semanal
     working_df["__sort_week"] = working_df["week_order"].astype(int)
     working_df["__sort_time"] = working_df["schedule_date"]
 
     out_blocks = []
     wk_final_by_order = {}
 
-    # Pre-cargar cierres desde todo el bets_now (incluye frozen), respetando su valor
+    # Pre-cargar cierres desde bets_now (incluye frozen)
     prev = bets_now.dropna(subset=["bankroll_week_final"])
     for wkord, g in prev.groupby("week_order"):
         try:
@@ -229,6 +254,7 @@ def _process_live_freezing(bets_now: pd.DataFrame, odds: pd.DataFrame) -> pd.Dat
                 if settled and pd.isna(df_week.at[idx, "profit"]):
                     prof = _compute_profit(row.get("stake"), row.get("decimal_odds"), df_week.at[idx, "result"])
                     df_week.at[idx, "profit"] = prof
+                # Si ya hay profit, cuenta al running
                 if settled and pd.notna(df_week.at[idx, "profit"]):
                     running += float(df_week.at[idx, "profit"])
                     df_week.at[idx, "bankroll_after"] = running
@@ -236,7 +262,8 @@ def _process_live_freezing(bets_now: pd.DataFrame, odds: pd.DataFrame) -> pd.Dat
                 else:
                     df_week.at[idx, "bankroll_after"] = pd.NA
 
-            week_complete = df_week["result"].notna().all()
+            # Semana final si TODAS las filas tienen result y profit no nulos
+            week_complete = df_week["result"].notna().all() and df_week["profit"].notna().all()
             df_week["week_is_final"] = bool(week_complete)
             df_week["bankroll_week_final"] = last_final_bank if week_complete else pd.NA
 
@@ -256,10 +283,18 @@ def _process_live_freezing(bets_now: pd.DataFrame, odds: pd.DataFrame) -> pd.Dat
 
     # Reunir: finales intactas + actualizadas
     final_df = pd.concat([frozen_df, updated_working], ignore_index=True)
-    final_df = final_df.sort_values(["week_order","schedule_date"], kind="stable")
+    final_df = final_df.sort_values(["season","week_order","schedule_date"], kind="stable")
 
     # No tocamos 'bankroll' (columna vieja); si existe, la quitamos
     final_df = final_df.drop(columns=["bankroll"], errors="ignore")
+
+    # Log útil
+    finals = final_df.groupby(["season","week_label"])["week_is_final"].apply(lambda s: bool(s.all())).reset_index()
+    finals_true = finals.loc[finals["week_is_final"], "week_label"].tolist()
+    finals_false = finals.loc[~finals["week_is_final"], "week_label"].tolist()
+    print(f"[annotate] Semanas ahora finalizadas: {finals_true}")
+    print(f"[annotate] Semanas aún abiertas: {finals_false}")
+
     return final_df
 
 def main():
@@ -274,9 +309,7 @@ def main():
 
     # Persistir
     out.to_csv(LIVE_BETS_FILE, index=False)
-    print("✅ LIVE actualizado: solo semanas abiertas modificadas; semanas finalizadas preservadas. Redondeo a 2 decimales aplicado solo en filas nuevas/actualizadas.")
+    print("✅ LIVE actualizado: semanas finalizadas preservadas y abiertas recalculadas. Redondeo aplicado.")
 
 if __name__ == "__main__":
     main()
-
-
