@@ -9,14 +9,12 @@ LIVE_BETS_FILE = Path("data/live/bets.csv")
 LIVE_ODDS_FILE = Path("data/live/odds.csv")
 
 INITIAL_BANKROLL = 1000.0
-FREEZE_FINAL_WEEKS = True  # congelar semanas cerradas
+FREEZE_FINAL_WEEKS = True  # <- NO tocar semanas marcadas finalizadas
 
 TEAM_FIX = {
     "STL":"LA","LAR":"LA","SD":"LAC","SDG":"LAC","OAK":"LV","LVR":"LV","WSH":"WAS","JAC":"JAX",
     "GNB":"GB","KAN":"KC","NWE":"NE","NOR":"NO","SFO":"SF","TAM":"TB"
 }
-ORDER_LABELS = [f"Week {i}" for i in range(1, 19)] + ["Wild Card", "Divisional", "Conference", "Super Bowl"]
-ORDER_INDEX = {lab: i for i, lab in enumerate(ORDER_LABELS)}
 
 def _norm_team(x: str) -> str:
     s = str(x).upper().strip()
@@ -26,18 +24,45 @@ def _safe_num(s):
     return pd.to_numeric(s, errors="coerce")
 
 def _week_label_from_num(n: int) -> str:
+    if pd.isna(n):
+        return pd.NA
+    try:
+        n = int(n)
+    except Exception:
+        return pd.NA
     if 1 <= n <= 18:
         return f"Week {n}"
-    return {19:"Wild Card",20:"Divisional",21:"Conference",22:"Super Bowl"}.get(n, f"Week {n}")
+    return {
+        19: "Wild Card",
+        20: "Divisional",
+        21: "Conference",
+        22: "Super Bowl",
+    }.get(n, f"Week {n}")
 
 def _normalize_week_order(df: pd.DataFrame) -> pd.Series:
-    if "week_order" in df.columns:
-        return _safe_num(df["week_order"]).fillna(999).astype(int)
+    """
+    Preferir week > week_label > week_order (si ya viene válida).
+    Evita el bug de tomar una week_order vacía primero y terminar con 999.
+    """
+    # 1) week num
     if "week" in df.columns:
-        return _safe_num(df["week"]).fillna(999).astype(int)
+        wk = _safe_num(df["week"])
+        if wk.notna().any():
+            return wk.fillna(999).astype(int)
+
+    # 2) week_label -> número
     if "week_label" in df.columns:
         wk = df["week_label"].astype(str).str.extract(r"(\d+)")[0]
-        return _safe_num(wk).fillna(999).astype(int)
+        wk = _safe_num(wk)
+        if wk.notna().any():
+            return wk.fillna(999).astype(int)
+
+    # 3) week_order existente (si está útil)
+    if "week_order" in df.columns:
+        wk = _safe_num(df["week_order"])
+        return wk.fillna(999).astype(int)
+
+    # 4) fallback
     return pd.Series([999] * len(df), index=df.index, dtype=int)
 
 def _make_game_id(week_label: str, a: str, b: str) -> str:
@@ -61,7 +86,7 @@ def _compute_profit(stake, decimal_odds, result):
     dec = _safe_num(decimal_odds)
     if pd.isna(stake) or pd.isna(dec) or pd.isna(result):
         return pd.NA
-    r = str(result)
+    r = str(result).upper()
     if r == "WIN":  return float(stake) * (float(dec) - 1.0)
     if r == "LOSS": return -float(stake)
     if r == "PUSH": return 0.0
@@ -71,7 +96,8 @@ def _ensure_cols(df: pd.DataFrame) -> pd.DataFrame:
     need = [
         "season","week","week_label","schedule_date","side","team","opponent",
         "decimal_odds","stake","team_score","opponent_score","status","status_short",
-        "result","profit","bankroll_after","bankroll_week_final","game_id","week_order"
+        "result","profit","bankroll_after","bankroll_week_final","week_is_final",
+        "game_id","week_order"
     ]
     for c in need:
         if c not in df.columns:
@@ -80,23 +106,36 @@ def _ensure_cols(df: pd.DataFrame) -> pd.DataFrame:
 
 def _prepare_bets(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+
+    # Normaliza equipos
     for c in ("team","opponent"):
         if c in df.columns:
             df[c] = df[c].astype(str).map(_norm_team)
+
+    # Números y fechas
     for col in ("stake","profit","decimal_odds","bankroll_after","bankroll_week_final"):
         if col in df.columns:
             df[col] = _safe_num(df[col])
     df["schedule_date"] = pd.to_datetime(df.get("schedule_date"), errors="coerce", utc=True)
+
+    # week_label si falta
     if "week_label" not in df.columns or df["week_label"].isna().any():
         if "week" in df.columns:
-            df["week_label"] = df["week"].apply(lambda x: _week_label_from_num(int(x)) if pd.notna(x) else pd.NA)
+            df["week_label"] = df["week"].apply(_week_label_from_num)
+
+    # week_order (preferir week / week_label / week_order)
     df["week_order"] = _normalize_week_order(df)
-    df["team_score"] = _safe_num(df.get("team_score"))
-    df["opponent_score"] = _safe_num(df.get("opponent_score"))
-    df["season"] = _safe_num(df.get("season")).astype("Int64")
-    df["week"] = _safe_num(df.get("week")).astype("Int64")
+
+    # Scores y tipos
+    df["team_score"] = _safe_num(df["team_score"])
+    df["opponent_score"] = _safe_num(df["opponent_score"])
+    df["season"] = _safe_num(df["season"]).astype("Int64")
+    df["week"] = _safe_num(df["week"]).astype("Int64")
+
     if "side" in df.columns:
         df["side"] = df["side"].astype(str).str.lower()
+
+    # game_id si falta
     if "game_id" not in df.columns or df["game_id"].isna().any():
         df["game_id"] = [
             _make_game_id(wl, _norm_team(t), _norm_team(o)) if pd.notna(wl) else pd.NA
@@ -115,7 +154,7 @@ def _load_live_odds() -> pd.DataFrame:
     odds["season"] = _safe_num(odds.get("season")).astype("Int64")
     odds["week"] = _safe_num(odds.get("week")).astype("Int64")
     if "week_label" not in odds.columns or odds["week_label"].isna().any():
-        odds["week_label"] = odds["week"].apply(lambda x: _week_label_from_num(int(x)) if pd.notna(x) else pd.NA)
+        odds["week_label"] = odds["week"].apply(_week_label_from_num)
     odds["game_id"] = [
         _make_game_id(wl, _norm_team(h), _norm_team(a)) if pd.notna(wl) else pd.NA
         for wl, h, a in zip(odds["week_label"], odds["home_team"], odds["away_team"])
@@ -127,7 +166,7 @@ def _load_live_odds() -> pd.DataFrame:
     return odds
 
 def _merge_scores_incomplete_weeks(bets: pd.DataFrame, odds: pd.DataFrame) -> pd.DataFrame:
-    """Completa scores y estado solo en semanas no finalizadas."""
+    """Completa scores solo para filas sin score."""
     if bets.empty or odds.empty:
         return bets
     m = bets.merge(
@@ -135,7 +174,6 @@ def _merge_scores_incomplete_weeks(bets: pd.DataFrame, odds: pd.DataFrame) -> pd
         on=["season","week","game_id"], how="left"
     )
 
-    # Tomar scores según 'side'
     team_score_from_odds = np.where(
         m["side"].str.lower().eq("home"), m["score_home"],
         np.where(m["side"].str.lower().eq("away"), m["score_away"], np.nan)
@@ -145,7 +183,7 @@ def _merge_scores_incomplete_weeks(bets: pd.DataFrame, odds: pd.DataFrame) -> pd
         np.where(m["side"].str.lower().eq("away"), m["score_home"], np.nan)
     )
 
-    # Completar SOLO si faltan
+    # Completa solo donde faltan
     m["team_score"] = m["team_score"].where(m["team_score"].notna(), team_score_from_odds)
     m["opponent_score"] = m["opponent_score"].where(m["opponent_score"].notna(), opp_score_from_odds)
 
@@ -157,103 +195,89 @@ def _merge_scores_incomplete_weeks(bets: pd.DataFrame, odds: pd.DataFrame) -> pd
 
     return m.drop(columns=["score_home","score_away"], errors="ignore")
 
-def _is_week_final_by_profit(df_week: pd.DataFrame) -> bool:
-    """Regla pedida: semana final si TODAS las filas tienen profit NO nulo."""
-    if df_week.empty:
-        return False
-    all_profit = df_week["profit"].notna().all()
-    if bool(all_profit):
-        return True
-    # Fallback: si todas tienen result no nulo
-    all_result = df_week["result"].notna().all()
-    return bool(all_result)
-
 def _process_live_freezing(bets_now: pd.DataFrame, odds: pd.DataFrame) -> pd.DataFrame:
+    """Calcula profit/bankroll y marca 'bankroll_week_final' SOLO si la semana está completa."""
     if bets_now.empty:
         return bets_now
 
     bets_now = _ensure_cols(bets_now)
     bets_now = _prepare_bets(bets_now)
 
-    # Congelar semanas que ya traen bankroll_week_final (no las tocamos)
-    if FREEZE_FINAL_WEEKS:
-        by_wk = bets_now.groupby(["season","week"], dropna=False)["bankroll_week_final"].apply(
-            lambda s: s.notna().any()
-        )
-        freeze_pairs = set(k for k, v in by_wk.items() if bool(v))
-        mask_final = bets_now.apply(lambda r: (r.get("season"), r.get("week")) in freeze_pairs, axis=1)
-        mask_final = mask_final.fillna(False).astype(bool)
+    # Congelar semanas ya marcadas finales (si existen)
+    if FREEZE_FINAL_WEEKS and "week_is_final" in bets_now.columns:
+        mask_final = bets_now["week_is_final"].fillna(False).astype(bool)
     else:
-        mask_final = pd.Series([False]*len(bets_now), index=bets_now.index, dtype=bool)
+        mask_final = pd.Series([False]*len(bets_now), index=bets_now.index)
 
     frozen_df = bets_now.loc[mask_final].copy()
     working_df = bets_now.loc[~mask_final].copy()
 
-    # Completar scores y estatus en working_df
+    # Completa scores/estatus en working_df
     working_df = _merge_scores_incomplete_weeks(working_df, odds)
 
-    # Calcular result y profit donde ya hay score y no están
+    # Result por fila (si hay score)
     has_scores = working_df["team_score"].notna() & working_df["opponent_score"].notna()
-    # result
     calc_result = [
         _decide_result(a, b) if (pd.notna(a) and pd.notna(b)) else pd.NA
         for a, b in zip(working_df["team_score"], working_df["opponent_score"])
     ]
     working_df["result"] = working_df["result"].where(working_df["result"].notna(), calc_result)
-    # profit
-    need_profit = has_scores & working_df["profit"].isna()
-    working_df.loc[need_profit, "profit"] = [
-        _compute_profit(st, dec, res)
-        for st, dec, res in zip(
-            working_df.loc[need_profit, "stake"],
-            working_df.loc[need_profit, "decimal_odds"],
-            working_df.loc[need_profit, "result"],
-        )
-    ]
+    needs_status = has_scores & working_df["status"].isna()
+    working_df.loc[needs_status, "status"] = "FINAL"
+    needs_short  = has_scores & working_df["status_short"].isna()
+    working_df.loc[needs_short,  "status_short"] = "Final"
 
-    # Orden estable para carrera por semana
+    # Orden para carrera
     working_df["__sort_week"] = working_df["week_order"].astype(int)
     working_df["__sort_time"] = working_df["schedule_date"]
 
     out_blocks = []
-    wk_final_bank_by_order = {}
+    wk_final_by_order = {}
 
-    # Precargar cierres desde bets_now (incluye congeladas)
+    # Seed: si ya había bankroll_week_final en el archivo, respétalo
     prev = bets_now.dropna(subset=["bankroll_week_final"])
     for wkord, g in prev.groupby("week_order"):
         try:
-            wk_final_bank_by_order[int(wkord)] = float(g["bankroll_week_final"].dropna().iloc[-1])
+            wk_final_by_order[int(wkord)] = float(g["bankroll_week_final"].dropna().iloc[-1])
         except Exception:
             pass
 
-    # Recorre temporada->semana
+    # Recorre por temporada y semana (solo lo no congelado)
     for season, df_season in working_df.sort_values(["season","__sort_week","__sort_time"], kind="stable").groupby("season", sort=True):
         df_season = df_season.copy()
         for wkord, df_week in df_season.groupby("__sort_week", sort=True):
             df_week = df_week.copy().sort_values(["__sort_time"], kind="stable")
             prev_ord = int(wkord) - 1
-            baseline = float(wk_final_bank_by_order.get(prev_ord, INITIAL_BANKROLL))
+            baseline = float(wk_final_by_order.get(prev_ord, INITIAL_BANKROLL))
             running = baseline
             last_final_bank = pd.NA
 
-            # Acumular bankroll por apuestas ya liquidadas (profit no nulo)
             for idx, row in df_week.iterrows():
-                prof = df_week.at[idx, "profit"]
-                if pd.notna(prof):
-                    running += float(prof)
+                finalish = str(row.get("status", "")).upper() == "FINAL" or (
+                    pd.notna(row.get("team_score")) and pd.notna(row.get("opponent_score"))
+                )
+
+                # Profit si falta y está final
+                if finalish and pd.isna(df_week.at[idx, "profit"]):
+                    prof = _compute_profit(row.get("stake"), row.get("decimal_odds"), row.get("result"))
+                    df_week.at[idx, "profit"] = prof
+
+                if finalish and pd.notna(df_week.at[idx, "profit"]):
+                    running += float(df_week.at[idx, "profit"])
                     df_week.at[idx, "bankroll_after"] = running
                     last_final_bank = running
                 else:
                     df_week.at[idx, "bankroll_after"] = pd.NA
 
-            # Regla de cierre de semana
-            week_complete = _is_week_final_by_profit(df_week)
+            # Semana completa = todos tienen result/profit (no NA)
+            week_complete = df_week["profit"].notna().all()
+            df_week["week_is_final"] = bool(week_complete)
             df_week["bankroll_week_final"] = last_final_bank if week_complete else pd.NA
 
             if week_complete and pd.notna(last_final_bank):
-                wk_final_bank_by_order[int(wkord)] = float(last_final_bank)
+                wk_final_by_order[int(wkord)] = float(last_final_bank)
 
-            # Redondeo en filas trabajadas
+            # Redondeo a 2 decimales en filas actualizadas
             for c in ["stake", "profit", "bankroll_after", "bankroll_week_final"]:
                 if c in df_week.columns:
                     df_week[c] = _safe_num(df_week[c]).round(2)
@@ -264,11 +288,11 @@ def _process_live_freezing(bets_now: pd.DataFrame, odds: pd.DataFrame) -> pd.Dat
         pd.concat(out_blocks, ignore_index=True) if out_blocks else working_df
     ).drop(columns=["__sort_week","__sort_time"], errors="ignore")
 
-    # Unir: congeladas intactas + actualizadas
+    # Reunir: congeladas + actualizadas
     final_df = pd.concat([frozen_df, updated_working], ignore_index=True)
     final_df = final_df.sort_values(["week_order","schedule_date"], kind="stable")
 
-    # Quitar columna legacy 'bankroll' si existe
+    # Limpieza
     final_df = final_df.drop(columns=["bankroll"], errors="ignore")
     return final_df
 
@@ -284,7 +308,7 @@ def main():
 
     # Persistir
     out.to_csv(LIVE_BETS_FILE, index=False)
-    print("✅ LIVE actualizado: semanas finalizadas se congelan; semanas abiertas se completan con scores, result/profit y bankroll_after. 'bankroll_week_final' solo si la semana quedó completa (todos los profit != NA).")
+    print("✅ LIVE actualizado: profit/bankroll_after por jugada, y 'bankroll_week_final' SOLO si la semana quedó completa. Semanas finalizadas se congelan.")
 
 if __name__ == "__main__":
     main()
