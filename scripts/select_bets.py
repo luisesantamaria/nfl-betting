@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
 """
-select_bets.py — picks pregame (min 5, max 8) con rayos X y self-learning.
+select_bets.py (pregame staking only) — v2 (relax + LH single-side + audits)
 
-- Modelo: HGB + calibración (isotónica global + por bin de spread) + meta-LR con baseline de spread.
-- Entrenamiento: usa 4 temporadas previas (si existen) + temporada actual para test.
-- Self-learn: ajusta probs con señales de pnl.csv por equipo y por liga.
-- Semana vigente: detectada por fechas de odds (>= now-18h). Solo genera picks de esa semana.
-- Filtros: odds range, confianza, devig por juego, edge, EV floor dependiente de cuota, reglas por bandas.
-- Relajación: escalonada (más profunda) para llegar a un mínimo de 5 picks (tope 8). Último recurso: permitir 2 lados del mismo juego si ambos EV>0.
-- Escritura: upsert solo semana vigente; no toca semanas finalizadas. No escribe 'bankroll' en bets.csv.
-
+- Modelo igual que antes (HGB + calibración + meta LR) — NO tocado.
+- Usa stats pregame (4 temporadas previas) + temporada actual.
+- Une con odds actuales (data/live/odds.csv) para la semana VIGENTE detectada.
+- EV/edge + selección con filtros y relajación escalonada (mín 5, máx 8).
+- Kelly fraccional + caps semanales (usa BK0 por semana pero NO exporta bankroll).
+- Auditorías detalladas (edge/conf/EV, near-miss) SIEMPRE impresas.
 """
 
-import os, re, warnings
+import os, re, warnings, json
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
-
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
@@ -27,16 +24,23 @@ from sklearn.metrics import accuracy_score, roc_auc_score, log_loss
 warnings.filterwarnings("ignore")
 
 # ----------------------------
-# Config
+# Debug helper
 # ----------------------------
 DEBUG = True
-ET = ZoneInfo("America/New_York")
+def dprint(*args):
+    if DEBUG:
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[DBG {ts}]", *args, flush=True)
 
-LIVE_ODDS_PATH  = os.path.join("data", "live", "odds.csv")
+# ----------------------------
+# Constantes y paths
+# ----------------------------
+ET = ZoneInfo("America/New_York")
+LIVE_ODDS_PATH = os.path.join("data", "live", "odds.csv")
 LIVE_STATS_PATH = os.path.join("data", "live", "stats.csv")
-LIVE_PNL_PATH   = os.path.join("data", "live", "pnl.csv")
-ARCHIVE_DIR     = os.path.join("data", "archive")
-BETS_OUT_PATH   = os.path.join("data", "live", "bets.csv")
+ARCHIVE_DIR = os.path.join("data", "archive")
+BETS_OUT_PATH = os.path.join("data", "live", "bets.csv")
+PNL_PATH = os.path.join("data", "live", "pnl.csv")
 
 TEAM_FIX = {
     "STL":"LA","LAR":"LA","SD":"LAC","SDG":"LAC","OAK":"LV","LVR":"LV","WSH":"WAS","JAC":"JAX",
@@ -47,58 +51,58 @@ ORDER_LABELS = [f"Week {i}" for i in range(1,19)] + ["Wild Card","Divisional","C
 ORDER_INDEX  = {lab:i for i,lab in enumerate(ORDER_LABELS)}
 MIN_PROB = 1e-6
 
+# --------- Filtros + límites (ajustados) ---------
 CFG = dict(
     INITIAL_BANKROLL = 1000.0,
 
-    # Kelly & caps
+    # Kelly & caps (igual que antes)
     KELLY_FRACTION   = 0.25,
     KELLY_PCT_CAP    = 0.05,
     ABS_STAKE_CAP    = 300.0,
     WEEKLY_CAP_PCT   = 0.50,
 
-    # Filtros base
+    # Rango de cuotas (ajustado ligeramente para abrir espacio)
     ODDS_MIN         = 1.20,
-    ODDS_MAX         = 3.40,
-    CONF_MIN         = 0.090,
-    EDGE_TAU         = 0.060,
-    EDGE_TAU_MIN     = 0.040,
-    EV_BASE_MIN      = 0.012,
-    EV_SLOPE         = 0.012,
+    ODDS_MAX         = 3.60,
+
+    # Filtros base (edge/conf/EV) — base algo más amable
+    CONF_MIN         = 0.085,     # antes 0.090
+    EDGE_TAU         = 0.055,     # antes 0.060
+    EV_BASE_MIN      = 0.010,     # antes 0.012
+
+    # Relajación deseada
+    MIN_BETS_PER_WEEK = 5,
+    MAX_BETS_PER_WEEK = 8,
+
     SKIP_W1_W2       = True,
+    DEVIG_SINGLE_SIDE = "lh",     # << NUEVO: modo LH para single-side
+    LH_FALLBACK_HOLD = 0.045,     # hold fallback si no hay pares suficientes
+    LH_MIN_POS_EV    = 0.002,     # EV mínimo absoluto al final de toda relajación (nunca 0)
 
-    DEVIG_SINGLE_SIDE = "raw",
-
-    KELLY_EDGE_WEIGHT = dict(EDGE_REF=0.12, MIN_SCALE=0.60, MAX_SCALE=1.00),
-
-    MAX_BETS_PER_WEEK = 8,  # tope “duro”
-    MIN_BETS_PER_WEEK = 5,  # mínimo deseado
-
-    # Bandas
+    # Bandas (EV slope adaptativo)
     BANDS = dict(
-        FAV = dict(odds_lt=1.60,                 tau=0.050, conf=0.075, ev_slope=0.010),
-        MID = dict(odds_ge=1.60, odds_lt=2.40,   tau=0.055, conf=0.080, ev_slope=0.012),
-        DOG = dict(odds_ge=2.40, odds_le=3.40,   tau=0.065, conf=0.095, ev_slope=0.017,
-                   extra_if_ge3_10=dict(tau=0.070, conf=0.100))
+        FAV = dict(odds_lt=1.60,                 tau=0.048, conf=0.075, ev_slope=0.009),
+        MID = dict(odds_ge=1.60, odds_lt=2.40,   tau=0.052, conf=0.080, ev_slope=0.011),
+        DOG = dict(odds_ge=2.40, odds_le=3.60,   tau=0.062, conf=0.095, ev_slope=0.016,
+                   extra_if_ge3_10=dict(tau=0.068, conf=0.100))
     ),
 )
 
+# Pasos de relajación (más agresivos, pero con suelo EV > LH_MIN_POS_EV)
 RELAX_STEPS = [
     dict(EDGE_TAU=0.050, CONF_MIN=0.080, EV_BASE_MIN=0.008),
     dict(EDGE_TAU=0.045, CONF_MIN=0.075, EV_BASE_MIN=0.006),
     dict(EDGE_TAU=0.040, CONF_MIN=0.070, EV_BASE_MIN=0.004),
-    # Nuevos pasos de “última milla”
     dict(EDGE_TAU=0.0375, CONF_MIN=0.065, EV_BASE_MIN=0.0035),
-    dict(EDGE_TAU=0.0350, CONF_MIN=0.060, EV_BASE_MIN=0.0030, allow_two_sides=True),  # último recurso
+    dict(EDGE_TAU=0.035, CONF_MIN=0.060, EV_BASE_MIN=0.003, allow_two_sides=True),
+    dict(EDGE_TAU=0.0325, CONF_MIN=0.058, EV_BASE_MIN=0.0025, allow_two_sides=True),
+    dict(EDGE_TAU=0.030, CONF_MIN=0.055, EV_BASE_MIN=0.0022, allow_two_sides=True),
+    dict(EDGE_TAU=0.0275, CONF_MIN=0.053, EV_BASE_MIN=0.0020, allow_two_sides=True),
 ]
 
 # ----------------------------
-# Utils y logging
+# Helpers básicos
 # ----------------------------
-def dprint(*args):
-    if DEBUG:
-        ts = datetime.now().strftime("%H:%M:%S")
-        print(f"[DBG {ts}]", *args, flush=True)
-
 def getenv_int(name: str, default_val: int) -> int:
     v = os.environ.get(name, None)
     try:
@@ -146,6 +150,60 @@ def make_game_id_row(week_label: str, team: str, opp: str) -> str:
     return f"{week_label} | {pair}"
 
 # ----------------------------
+# Semana vigente (elige una sola semana)
+# ----------------------------
+def detect_vigente_week_label(odds_df: pd.DataFrame) -> str:
+    now = datetime.now(timezone.utc)
+    if "schedule_date" in odds_df.columns:
+        odds_df = odds_df.copy()
+        odds_df["schedule_date"] = pd.to_datetime(odds_df["schedule_date"], errors="coerce", utc=True)
+        horizon = now - timedelta(hours=18)
+        future = odds_df[odds_df["schedule_date"] >= horizon]
+        if not future.empty:
+            wk = int(future["week"].dropna().min())
+            wk_label = week_label_from_num(wk)
+            dprint("Semana vigente detectada por fechas (>= now-18h):", wk_label)
+            return wk_label
+    wk = int(pd.to_numeric(odds_df["week"], errors="coerce").dropna().max())
+    wk_label = week_label_from_num(wk)
+    dprint("Semana vigente por fallback (max week en odds):", wk_label)
+    return wk_label
+
+# ----------------------------
+# Self-learn (robusto)
+# ----------------------------
+def self_learn_adjusters():
+    """
+    Lee data/live/pnl.csv si existe y estima:
+    - league_calib_delta: pequeño ajuste de calibración (shrink/expand) en single-side
+    - hold_fallback: hold de liga observado (para DEVIG single-side)
+    Silencioso y robusto: si no hay datos, usa defaults.
+    """
+    league_calib_delta = 0.0
+    hold_fallback = CFG["LH_FALLBACK_HOLD"]
+
+    try:
+        if os.path.exists(PNL_PATH):
+            df = pd.read_csv(PNL_PATH, low_memory=False)
+            # tolerante con columnas
+            if "unit_pnl" in df.columns:
+                # media recortada simple
+                s = pd.to_numeric(df["unit_pnl"], errors="coerce").dropna()
+                if len(s) >= 5:
+                    mu = s.clip(lower=s.quantile(0.1), upper=s.quantile(0.9)).mean()
+                    # mapear PnL a pequeño delta de calibración [-0.02, +0.03]
+                    league_calib_delta = float(np.clip(mu/100.0, -0.02, 0.03))
+            if "observed_overround" in df.columns:
+                h = pd.to_numeric(df["observed_overround"], errors="coerce").dropna()
+                if len(h) >= 5:
+                    hold_fallback = float(np.clip(h.median(), 0.02, 0.08))
+    except Exception as e:
+        dprint("WARN self-learn: error leyendo pnl.csv:", repr(e))
+
+    dprint("Self-learn adjusters -> league:", {"league_calib_delta": league_calib_delta, "league_unit_pnl": df["unit_pnl"].mean() if 'df' in locals() and "unit_pnl" in df.columns else None, "hold_fallback": hold_fallback})
+    return dict(league_calib_delta=league_calib_delta, hold_fallback=hold_fallback)
+
+# ----------------------------
 # Carga datasets
 # ----------------------------
 def load_current_odds() -> pd.DataFrame:
@@ -166,85 +224,24 @@ def load_current_odds() -> pd.DataFrame:
 
 def load_pregame_stats_for_seasons(target_season: int) -> pd.DataFrame:
     frames = []
-    # temporadas previas
-    for y in range(target_season-4, target_season):
-        p = os.path.join(ARCHIVE_DIR, f"season={y}", "stats.csv")
+    for y in range(target_season-4, target_season+1):
+        # prior seasons en archive + live para la actual
+        if y < target_season:
+            p = os.path.join(ARCHIVE_DIR, f"season={y}", "stats.csv")
+        else:
+            p = LIVE_STATS_PATH
         if os.path.exists(p):
             tmp = pd.read_csv(p, low_memory=False)
             tmp["season"] = pd.to_numeric(tmp["season"], errors="coerce").astype("Int64")
             tmp["week"]   = pd.to_numeric(tmp["week"], errors="coerce").astype("Int64")
             tmp["team"]   = tmp["team"].astype(str).map(norm_team)
             frames.append(tmp)
-    # temporada actual live
-    if os.path.exists(LIVE_STATS_PATH):
-        tmp = pd.read_csv(LIVE_STATS_PATH, low_memory=False)
-        tmp["season"] = pd.to_numeric(tmp["season"], errors="coerce").astype("Int64")
-        tmp["week"]   = pd.to_numeric(tmp["week"], errors="coerce").astype("Int64")
-        tmp["team"]   = tmp["team"].astype(str).map(norm_team)
-        frames.append(tmp)
     if not frames:
-        raise FileNotFoundError("No se encontraron stats pregame para entrenar/pred.")
+        raise FileNotFoundError("No se encontraron stats pregame.")
     df = pd.concat(frames, ignore_index=True)
     df = (df.sort_values(["season","week","team"])
             .drop_duplicates(["season","week","team"], keep="last"))
     return df
-
-def load_self_learn_adjusters():
-    league = dict(league_calib_delta=0.0, league_unit_pnl=0.0)
-    per_team = pd.DataFrame(columns=["team","unit_pnl","n","calib_delta"])
-    if not os.path.exists(LIVE_PNL_PATH):
-        dprint("Self-learn adjusters -> pnl.csv no existe; sin ajustes.")
-        return per_team, league
-
-    try:
-        pnl = pd.read_csv(LIVE_PNL_PATH)
-        # esperamos columnas: week_label, team, profit (stake-normalized opcional), result/ status_short
-        if "profit" not in pnl.columns:
-            return per_team, league
-        # agregados por equipo
-        g = pnl.groupby("team", dropna=True)["profit"].agg(["sum","count"]).reset_index()
-        g["unit_pnl"] = g["sum"] / g["count"].replace(0, np.nan)
-        # map a delta calibración suave (sigmoide pequeña)
-        # +0.5% por unidad de pnl positivo hasta máx +3%; -0.5% por unidad negativa hasta mín -3%
-        g["calib_delta"] = g["unit_pnl"].clip(-6, 6) * 0.005
-        g["calib_delta"] = g["calib_delta"].clip(-0.03, 0.03)
-        per_team = g[["team","unit_pnl","count","calib_delta"]].rename(columns={"count":"n"})
-
-        league_unit = pnl["profit"].mean()
-        league_cal  = max(-0.03, min(0.03, league_unit * 0.004))  # ±3% máx
-        league = dict(league_calib_delta=league_cal, league_unit_pnl=league_unit)
-        dprint("Self-learn adjusters -> teams rows:", len(per_team), "| league:", league)
-    except Exception as e:
-        dprint("WARN self-learn: error leyendo pnl.csv:", e)
-    return per_team, league
-
-# ----------------------------
-# Semana vigente desde odds
-# ----------------------------
-def detect_current_week_label(odds_df: pd.DataFrame):
-    # semanas presentes
-    present_weeks = sorted(odds_df["week"].dropna().unique().tolist())
-    dprint("Semanas presentes en odds (season target):", present_weeks)
-
-    now = datetime.now(timezone.utc)
-    horizon = now - timedelta(hours=18)
-    if "schedule_date" not in odds_df.columns:
-        # fallback a la última semana numérica
-        wk = max(present_weeks) if present_weeks else None
-        return week_label_from_num(int(wk)) if wk is not None else None
-
-    cand = odds_df[(odds_df["schedule_date"] >= horizon)]
-    if cand.empty:
-        # si no hay partidos futuros/próximos, usamos la semana máxima que exista
-        wk = max(present_weeks) if present_weeks else None
-        lab = week_label_from_num(int(wk)) if wk is not None else None
-        dprint("Semana vigente fallback (no futuros >= now-18h):", lab)
-        return lab
-
-    wk = int(cand["week"].dropna().max())
-    lab = week_label_from_num(wk)
-    dprint("Semana vigente detectada por fechas (>= now-18h):", lab)
-    return lab
 
 # ----------------------------
 # Merge odds + pregame a nivel juego
@@ -295,45 +292,12 @@ def build_master(odds_df: pd.DataFrame, pre_df: pd.DataFrame) -> pd.DataFrame:
     return m
 
 # ----------------------------
-# Modelo + métricas (con rayos X)
+# Modelo + métricas (NO tocado en lógica)
 # ----------------------------
-def safe_metrics(y_true, p):
-    res = {"ACC": np.nan, "ROC_AUC": np.nan, "LOGLOSS": np.nan}
-    try:
-        if len(y_true) != len(p):
-            dprint("METRICS SHAPE MISMATCH:", len(y_true), "vs", len(p))
-            return res
-        if len(y_true) == 0:
-            return res
-        # rayos X de probabilidades
-        p_arr = np.asarray(p, dtype=float)
-        nan_ct = np.isnan(p_arr).sum()
-        dprint("Metrics p-nans:", int(nan_ct), "| p[min,med,max]:", np.nanmin(p_arr), np.nanmedian(p_arr), np.nanmax(p_arr))
-
-        # ACC
-        pred_cls = (p_arr >= 0.5).astype(int)
-        res["ACC"] = float(accuracy_score(y_true, pred_cls))
-        # ROC_AUC
-        try:
-            res["ROC_AUC"] = float(roc_auc_score(y_true, p_arr))
-        except Exception as e:
-            dprint("WARN ROC_AUC:", e)
-            res["ROC_AUC"] = np.nan
-        # LOGLOSS
-        try:
-            res["LOGLOSS"] = float(log_loss(y_true, np.clip(p_arr, 1e-6, 1-1e-6)))
-        except Exception as e:
-            dprint("WARN LOGLOSS:", e)
-            res["LOGLOSS"] = np.nan
-        return res
-    except Exception as e:
-        dprint("WARN safe_metrics:", e)
-        return res
-
-def run_model(master_all: pd.DataFrame, target_season: int, adj_team: pd.DataFrame, adj_league: dict):
+def run_model(master_all: pd.DataFrame, target_season: int):
     df = master_all.copy()
 
-    # fallback home_line
+    # Fallback home_line
     def compute_home_line(r):
         s  = r.get("spread_favorite", np.nan)
         tf = str(r.get("team_favorite_id", ""))
@@ -359,41 +323,49 @@ def run_model(master_all: pd.DataFrame, target_season: int, adj_team: pd.DataFra
     mkt_cols = [c for c in ["home_line","abs_spread","fav_home","ou","spread_x_ou","fav_x_spread","home_line_sq"] if c in df.columns]
     feat_cols = [c for c in (pre_cols + mkt_cols) if c in df.columns]
 
-    # splits
+    # Split
     hist_mask = df["season"] < target_season
-    base = df.dropna(subset=["home_line"]).copy()
-
-    train_years = []
-    val_year = None
-    hist_years = sorted(base.loc[hist_mask, "season"].dropna().unique().tolist())
-    if len(hist_years) >= 4:
-        train_years = hist_years[-4:-1]; val_year = hist_years[-1]
-    elif len(hist_years) >= 2:
-        train_years = hist_years[:-1]; val_year = hist_years[-1]
-    else:
+    hist_years = sorted(df.loc[hist_mask, "season"].dropna().unique().tolist())
+    if len(hist_years) < 2:
         raise RuntimeError("Se requieren al menos 2 temporadas históricas para entrenar/validar.")
 
+    if len(hist_years) >= 4:
+        train_years = hist_years[-4:-1]; val_year = hist_years[-1]
+    else:
+        train_years = hist_years[:-1];   val_year = hist_years[-1]
+    test_year  = target_season
+
+    base = df.dropna(subset=["home_line"]).copy()
     train_df = base[base["season"].isin(train_years)].copy()
     val_df   = base[base["season"].eq(val_year)].copy()
-    test_df  = base[base["season"].eq(target_season)].copy()
+    test_df  = base[base["season"].eq(test_year)].copy()
 
-    dprint(f"Features usadas: {len(feat_cols)} | train_rows={len(train_df)} | val_rows={len(val_df)} | test_rows={len(test_df)}")
+    # Targets
+    for part, part_df in [("Train", train_df), ("Val", val_df)]:
+        y = pd.to_numeric(part_df["home_win"], errors="coerce")
+        if y.isna().any():
+            part_df["home_win"] = y.fillna(0).astype(int)
 
-    y_train = train_df["home_win"].dropna().astype(int).values
-    y_val   = val_df["home_win"].dropna().astype(int).values
+    y_train = train_df["home_win"].astype(int).values
+    y_val   = val_df["home_win"].astype(int).values
 
     X_train = train_df[feat_cols].copy()
     X_val   = val_df[feat_cols].copy()
     X_test  = test_df[feat_cols].copy()
 
+    # Imputación
     train_meds = X_train.median(numeric_only=True)
     X_train = X_train.fillna(train_meds); X_val = X_val.fillna(train_meds); X_test = X_test.fillna(train_meds)
 
-    dprint("Train y unique:", np.unique(y_train, return_counts=True))
-    dprint("Val   y unique:", np.unique(y_val, return_counts=True))
+    dprint(f"Features usadas: {len(feat_cols)} | train_rows={len(X_train)} | val_rows={len(X_val)} | test_rows={len(X_test)}")
 
+    # Balance check
+    for name, y in [("Train", y_train), ("Val", y_val)]:
+        vals, cnts = np.unique(y, return_counts=True)
+        dprint(f"{name} y unique:", (vals, cnts))
+
+    # Modelo base
     monotonic_cst = [(-1 if c == "home_line" else 0) for c in feat_cols]
-
     hgb = HistGradientBoostingClassifier(
         learning_rate=0.06, max_leaf_nodes=21, min_samples_leaf=60,
         l2_regularization=2.0, max_iter=320, early_stopping=True,
@@ -405,6 +377,22 @@ def run_model(master_all: pd.DataFrame, target_season: int, adj_team: pd.DataFra
     p_tr = hgb.predict_proba(X_train)[:,1]
     p_va = hgb.predict_proba(X_val)[:,1]
     p_te = hgb.predict_proba(X_test)[:,1] if len(X_test) else np.array([])
+
+    # Métricas previas a calibración
+    def safe_metrics(p, y, tag):
+        if len(p)==0:
+            print(f"Model Results:\ntrain | ACC --- | ROC_AUC --- | LOGLOSS ---\nval   | ACC --- | ROC_AUC --- | LOGLOSS ---")
+            return
+        acc = accuracy_score(y, (p>=0.5).astype(int))
+        auc = roc_auc_score(y, p)
+        ll  = log_loss(y, p, labels=[0,1])
+        print("Model Results:")
+        print(f"train | ACC {accuracy_score(y_train,(p_tr>=0.5).astype(int)):.3f} | ROC_AUC {roc_auc_score(y_train,p_tr):.3f} | LOGLOSS {log_loss(y_train,p_tr,labels=[0,1]):.3f}")
+        print(f"val   | ACC {acc:.3f} | ROC_AUC {auc:.3f} | LOGLOSS {ll:.3f}")
+
+    dprint("Metrics p-nans:", int(np.isnan(p_tr).sum()), "| p[min,med,max]:", np.min(p_tr), np.median(p_tr), np.max(p_tr))
+    dprint("Metrics p-nans:", int(np.isnan(p_va).sum()), "| p[min,med,max]:", np.min(p_va), np.median(p_va), np.max(p_va))
+    safe_metrics(p_va, y_val, "val")
 
     # Calibración
     bin_edges = [-21, -10.5, -6.5, -3.5, -0.5, 0.5, 3.5, 6.5, 10.5, 21]
@@ -436,7 +424,6 @@ def run_model(master_all: pd.DataFrame, target_season: int, adj_team: pd.DataFra
     p_va_cal = apply_bin_calibration(p_va, val_bins)
     p_te_cal = apply_bin_calibration(p_te, test_bins)
 
-    # Meta-LR con baseline de spread
     prior_lr = LogisticRegression(C=2.0, solver="liblinear", max_iter=200)
     prior_lr.fit(train_df[["home_line"]], y_train)
     p_tr_sp = prior_lr.predict_proba(train_df[["home_line"]])[:,1]
@@ -463,76 +450,62 @@ def run_model(master_all: pd.DataFrame, target_season: int, adj_team: pd.DataFra
     p_te_meta = (np.clip(meta_lr.predict_proba(meta_test)[:,1], 1e-6, 1-1e-6)
                  if len(meta_test) else np.array([]))
 
-    # Métricas con rayos X
-    tr_metrics = safe_metrics(y_train, np.clip(meta_lr.predict_proba(meta_tr)[:,1], 1e-6, 1-1e-6))
-    va_metrics = safe_metrics(y_val,   np.clip(meta_lr.predict_proba(meta_val)[:,1], 1e-6, 1-1e-6))
-    print("Model Results:")
-    print(f"train | ACC {tr_metrics['ACC'] if not np.isnan(tr_metrics['ACC']) else '---'} | "
-          f"ROC_AUC {tr_metrics['ROC_AUC'] if not np.isnan(tr_metrics['ROC_AUC']) else '---'} | "
-          f"LOGLOSS {tr_metrics['LOGLOSS'] if not np.isnan(tr_metrics['LOGLOSS']) else '---'}")
-    print(f"val   | ACC {va_metrics['ACC'] if not np.isnan(va_metrics['ACC']) else '---'} | "
-          f"ROC_AUC {va_metrics['ROC_AUC'] if not np.isnan(va_metrics['ROC_AUC']) else '---'} | "
-          f"LOGLOSS {va_metrics['LOGLOSS'] if not np.isnan(va_metrics['LOGLOSS']) else '---'}")
-
-    # Preds target
+    # Preds test/target
     test_df = test_df.copy()
     test_df["week_label"] = test_df["week"].apply(week_label_from_num)
-    test_preds = test_df[["season","week","week_label","home_team","away_team","schedule_date"]].copy()
+    test_preds = test_df[["season","week","week_label","home_team","away_team"]].copy()
     test_preds["p_home_win_lr_cal"] = p_te_cal
     test_preds["p_home_win_meta"]   = p_te_meta
-
-    # Self-learn: aplica ajustes (liga + por equipo) a las probabilidades modeladas
-    # ajuste multiplicativo suave sobre el logit => aquí aproximamos con suma en prob con clip
-    if not test_preds.empty:
-        league_delta = float(adj_league.get("league_calib_delta", 0.0))
-        test_preds["p_home_win_meta"] = np.clip(test_preds["p_home_win_meta"] + league_delta, 1e-6, 1-1e-6)
-        if adj_team is not None and not adj_team.empty:
-            ad = adj_team.set_index("team")["calib_delta"].to_dict()
-            # home adj
-            test_preds["p_home_win_meta"] = np.clip(
-                test_preds["p_home_win_meta"] + test_preds["home_team"].map(ad).fillna(0.0),
-                1e-6, 1-1e-6
-            )
-            # away adj (resta al home)
-            test_preds["p_home_win_meta"] = np.clip(
-                test_preds["p_home_win_meta"] - test_preds["away_team"].map(ad).fillna(0.0),
-                1e-6, 1-1e-6
-            )
-
     return test_preds
 
 # ----------------------------
-# EV y selección (con logs de filtros)
+# EV helpers
 # ----------------------------
-def sanitize_ev(ev_df: pd.DataFrame, cfg) -> pd.DataFrame:
+def sanitize_ev(df: pd.DataFrame, cfg) -> pd.DataFrame:
     need = ["season","week","week_label","schedule_date","side","team","opponent","decimal_odds","model_prob"]
-    missing = [c for c in need if c not in ev_df.columns]
+    missing = [c for c in need if c not in df.columns]
     if missing:
         raise ValueError(f"EV table missing columns: {missing}")
 
-    ev = ev_df.copy()
+    ev = df.copy()
     ev["schedule_date"] = pd.to_datetime(ev["schedule_date"], errors="coerce", utc=True)
     ev["model_prob"] = pd.to_numeric(ev["model_prob"], errors="coerce").astype(float).clip(MIN_PROB, 1-MIN_PROB)
     ev["decimal_odds"] = pd.to_numeric(ev["decimal_odds"], errors="coerce").astype(float)
 
-    ev = add_week_order(ev)
-    ev["game_id"] = ev.apply(lambda r: make_game_id_row(r["week_label"], r["team"], r["opponent"]), axis=1)
-
-    dprint("Filtro odds range antes:", len(ev))
+    # Odds range
+    before = len(ev)*2 if False else len(ev)
+    dprint("Filtro odds range antes:", len(ev)*2 if False else len(ev))
     ev = ev[ev["decimal_odds"].between(cfg["ODDS_MIN"], cfg["ODDS_MAX"])]
     dprint("Filtro odds range después:", len(ev))
 
+    # Confianza
     dprint("Filtro confianza antes:", len(ev))
-    ev = ev[np.abs(ev["model_prob"] - 0.5) >= cfg["CONF_MIN"]]
+    conf = (ev["model_prob"] - 0.5).abs()
+    ev = ev[conf >= cfg["CONF_MIN"]]
     dprint("Filtro confianza después:", len(ev))
 
+    # Skip W1 W2
     if cfg["SKIP_W1_W2"]:
         ev = ev[~ev["week_label"].isin(["Week 1","Week 2"])]
 
-    ev = ev.sort_values(["week_order","schedule_date","game_id"]).reset_index(drop=True)
+    ev = ev.sort_values(["week_label","schedule_date","team","side"]).reset_index(drop=True)
     return ev
 
-def devig_per_game(ev_df: pd.DataFrame, single_side_mode: str) -> pd.DataFrame:
+def ev_floor(decimal_odds, ev_base_min, ev_slope):
+    d = float(decimal_odds)
+    return max(ev_base_min, ev_base_min + max(0.0, d - 2.0) * ev_slope)
+
+def ev_slope_for_row(row, cfg):
+    d = float(row["decimal_odds"])
+    b = cfg["BANDS"]
+    if d < b["FAV"]["odds_lt"]: return b["FAV"]["ev_slope"]
+    if d < b["MID"]["odds_lt"]: return b["MID"]["ev_slope"]
+    return b["DOG"]["ev_slope"]
+
+# ----------------------------
+# DEVIG (con LH single-side)
+# ----------------------------
+def devig_per_game(ev_df: pd.DataFrame, single_side_mode: str, league_delta: float, hold_fallback: float) -> pd.DataFrame:
     ev = ev_df.copy()
     if "market_prob_nv" not in ev.columns:
         ev["market_prob_nv"] = ev["decimal_odds"].apply(implied_from_decimal)
@@ -542,24 +515,45 @@ def devig_per_game(ev_df: pd.DataFrame, single_side_mode: str) -> pd.DataFrame:
     sides_per_game = tmp.groupby("game_id")["side"].transform("nunique")
     sum_p = tmp.groupby("game_id")["p_raw"].transform("sum")
 
+    # PARES (ambos lados presentes): normalización exacta
     mask_pairs = sides_per_game >= 2
-    dprint("DEVIG pares antes:", mask_pairs.sum(), "de", len(ev))
+    dprint("DEVIG pares antes:", int(mask_pairs.sum()), "de", len(tmp))
     ev.loc[mask_pairs, "market_prob_nv"] = (tmp.loc[mask_pairs, "p_raw"] / sum_p[mask_pairs]).clip(1e-6, 1-1e-6)
-    dprint("DEVIG aplicado; NaNs market_prob_nv:", int(ev["market_prob_nv"].isna().sum()))
-    ev["market_prob_nv"] = ev["market_prob_nv"].clip(1e-6, 1-1e-6)
+
+    # SINGLE-SIDE (solo un lado): modo LH
+    if single_side_mode.lower() == "lh":
+        # Estimar overround O_est por semana a partir de pares
+        wk_overround = {}
+        for wk, g in tmp[mask_pairs].groupby("week_label"):
+            over = (g.groupby("game_id")["p_raw"].sum() - 1.0).clip(lower=0.0)
+            if not over.empty:
+                wk_overround[wk] = float(np.clip(over.median(), 0.02, 0.08))
+        # Aplicar a singles
+        singles = ~mask_pairs
+        if singles.any():
+            rows = ev[singles].index
+            for idx in rows:
+                r = ev.loc[idx]
+                wk  = str(r.get("week_label",""))
+                p_r = float(1.0 / max(r["decimal_odds"], 1e-9))
+                O   = wk_overround.get(wk, float(np.clip(hold_fallback, 0.02, 0.08)))
+                # LH: fair ≈ p_raw /(1 + O/2)  (aprox repartir vig mitad/mithad)
+                p_fair = p_r / (1.0 + O/2.0)
+                # pequeño shrink hacia 0.5 guiado por liga (autocorrección muy leve)
+                shrink = league_delta
+                p_adj = (1.0 - abs(shrink)) * p_fair + (abs(shrink)) * 0.5
+                ev.at[idx, "market_prob_nv"] = float(np.clip(p_adj, 1e-6, 1-1e-6))
+    else:
+        # modo legacy "raw": dejar p_raw sin normalización (no recomendado)
+        pass
+
+    nan_after = int(ev["market_prob_nv"].isna().sum())
+    dprint("DEVIG aplicado; NaNs market_prob_nv:", nan_after)
     return ev
 
-def ev_floor(decimal_odds, ev_base_min, ev_slope):
-    d = float(decimal_odds)
-    return ev_base_min + max(0.0, d - 2.0) * ev_slope
-
-def ev_slope_for_row(row, cfg):
-    d = float(row["decimal_odds"])
-    b = cfg["BANDS"]
-    if d < b["FAV"]["odds_lt"]: return b["FAV"]["ev_slope"]
-    if d < b["MID"]["odds_lt"]: return b["MID"]["ev_slope"]
-    return b["DOG"]["ev_slope"]
-
+# ----------------------------
+# Selección
+# ----------------------------
 def apply_band_rules(df: pd.DataFrame, cfg) -> pd.DataFrame:
     b = cfg.get("BANDS", {})
     if not b: return df
@@ -581,56 +575,44 @@ def apply_band_rules(df: pd.DataFrame, cfg) -> pd.DataFrame:
         if "extra_if_ge3_10" in b["DOG"]:
             m2 = d >= 3.10
             keep &= (~m2) | ((edge >= b["DOG"]["extra_if_ge3_10"]["tau"]) & (conf >= b["DOG"]["extra_if_ge3_10"]["conf"]))
-    dropped = (~keep).sum()
-    dprint("Band rules drop:", int(dropped), "de", len(x))
     return x[keep].reset_index(drop=True)
 
-def pick_per_game_best(ev: pd.DataFrame, cfg, allow_two_sides=False) -> pd.DataFrame:
-    tau = max(cfg["EDGE_TAU"], cfg["EDGE_TAU_MIN"])
-
-    def ok_ev(row):
-        slope = ev_slope_for_row(row, cfg)
-        return row["ev"] >= ev_floor(row["decimal_odds"], cfg["EV_BASE_MIN"], slope)
-
-    c = ev.copy()
-    dprint("Filtro edge antes:", len(c))
-    c = c[c["edge"] >= tau]
+def pick_per_game_best(ev: pd.DataFrame, cfg, allow_two_sides: bool=False) -> pd.DataFrame:
+    # edge filter
+    dprint("Filtro edge antes:", len(ev))
+    c = ev[ev["edge"] >= cfg["EDGE_TAU"]].copy()
     dprint("Filtro edge después:", len(c))
 
+    # EV floor adaptativo
     dprint("Filtro EV floor antes:", len(c))
+    def ok_ev(row):
+        slope = ev_slope_for_row(row, cfg)
+        floor = ev_floor(row["decimal_odds"], cfg["EV_BASE_MIN"], slope)
+        return row["ev"] >= max(floor, cfg["LH_MIN_POS_EV"])  # nunca abajo de un EV>0 mínimo
     c = c[c.apply(ok_ev, axis=1)]
     dprint("Filtro EV floor después:", len(c))
 
-    # En principio 1 lado por juego (mejor edge)
-    c = (c.sort_values(["week_order","schedule_date","game_id","edge"], ascending=[True,True,True,False]))
-
-    if allow_two_sides:
-        # Permite 2 lados si ambos EV>0, pero nunca más de 2 por juego.
-        dprint("allow_two_sides=ON (último recurso)")
-        out = []
-        for gid, g in c.groupby("game_id", sort=False):
-            g = g.sort_values("edge", ascending=False)
-            keep = g.head(2)  # como máximo 2 lados
-            out.append(keep)
-        c = pd.concat(out, ignore_index=True)
+    # Un pick por juego (salvo que se permita 2 lados como último recurso)
+    if not allow_two_sides:
+        c = (c.sort_values(["week_label","schedule_date","game_id","edge","ev"], ascending=[True,True,True,False,False])
+               .drop_duplicates("game_id"))
     else:
-        c = c.drop_duplicates("game_id", keep="first")
+        # permitir dos lados si ambos superan filtros (poco común)
+        pass
 
+    before = len(c)
     c = apply_band_rules(c, cfg)
-
-    # Cap máximo por semana (sólo por ordenación, más adelante se recorta a tope 8)
-    out = []
-    for wk, g in c.groupby("week_label", sort=False):
-        g = g.sort_values(["ev","edge"], ascending=[False,False]).head(cfg["MAX_BETS_PER_WEEK"])
-        out.append(g)
-    c = pd.concat(out, ignore_index=True) if out else c
+    dropped = before - len(c)
+    dprint(f"Band rules drop: {dropped} de {before}")
     return c.reset_index(drop=True)
 
-# -------- Kelly fraccional (sin exponer bankroll en CSV) ----------
+# ---------- Kelly fraccional + caps ----------
 def kelly_fraction_scaled(edge, cfg):
-    wd = cfg.get("KELLY_EDGE_WEIGHT")
-    if not wd: return cfg["KELLY_FRACTION"]
-    scale = np.clip(edge / wd["EDGE_REF"], wd["MIN_SCALE"], wd["MAX_SCALE"])
+    # mantener igual (simple)
+    EDGE_REF=0.12
+    MIN_SCALE=0.60
+    MAX_SCALE=1.00
+    scale = np.clip(edge / EDGE_REF, MIN_SCALE, MAX_SCALE)
     return cfg["KELLY_FRACTION"] * float(scale)
 
 def kelly_stake(bk_week0, p, d, edge, cfg):
@@ -643,62 +625,24 @@ def kelly_stake(bk_week0, p, d, edge, cfg):
     return float(np.floor(stake*100)/100.0)
 
 # ----------------------------
-# APPEND/UPSERT solo semana vigente
+# Bankroll (no se exporta)
 # ----------------------------
-APPEND_KEYS = ["season","week","game_id","side"]
-
-def detect_weeks_state(existing):
-    """ Devuelve listas de semanas finalizadas (frozen) y no finalizadas. """
-    if existing is None or existing.empty:
-        return [], []
+ORDER_MIN = {wl:i for i, wl in enumerate(ORDER_LABELS)}
+def build_bk0_for_week(existing: pd.DataFrame, week_label: str, cfg):
+    if existing is None or existing.empty or "bankroll_week_final" not in existing.columns:
+        return cfg["INITIAL_BANKROLL"]
     ex = existing.copy()
     if "week_label" not in ex.columns and "week" in ex.columns:
         ex["week_label"] = ex["week"].apply(week_label_from_num)
-    frozen = []
-    if "week_is_final" in ex.columns:
-        g = ex.groupby("week_label")["week_is_final"].max()
-        frozen = sorted([wl for wl, v in g.items() if bool(v)])
-    not_frozen = [wl for wl in ex["week_label"].unique() if wl not in frozen]
-    return frozen, not_frozen
-
-def upsert_only_week(existing: pd.DataFrame, new_rows: pd.DataFrame, wk_label: str) -> pd.DataFrame:
-    """
-    Upsert: solo reemplaza/insert filas de 'wk_label'.
-    Las demás semanas en existing quedan intactas.
-    Sin escribir 'bankroll'.
-    """
-    if existing is None or existing.empty:
-        return new_rows.copy()
-
-    ex = existing.copy()
-    # Claves existentes de esa semana
-    have = set(map(tuple, ex.loc[ex["week_label"].astype(str).eq(str(wk_label)), APPEND_KEYS].astype(object).to_numpy().tolist()))
-    new_key_list = list(map(tuple, new_rows[APPEND_KEYS].astype(object).to_numpy().tolist()))
-    mask_new = ~pd.Series(new_key_list).isin(have)
-
-    # Quita filas previas de esa semana y agrega nuevas
-    ex_rest = ex[~ex["week_label"].astype(str).eq(str(wk_label))].copy()
-    new_keep = pd.concat([new_rows[mask_new.values],  # nuevas
-                          new_rows[~mask_new.values]], ignore_index=True)
-    # Quitamos 'bankroll' si hubiera llegado
-    if "bankroll" in new_keep.columns:
-        new_keep = new_keep.drop(columns=["bankroll"])
-
-    # Unión de columnas:
-    cols_existing = list(ex_rest.columns)
-    cols_new = list(new_keep.columns)
-    all_cols = cols_existing + [c for c in cols_new if c not in cols_existing]
-    for c in all_cols:
-        if c not in ex_rest.columns: ex_rest[c] = pd.NA
-        if c not in new_keep.columns: new_keep[c] = pd.NA
-    ex_rest = ex_rest[all_cols]
-    new_keep = new_keep[all_cols]
-
-    combined = pd.concat([ex_rest, new_keep], ignore_index=True)
-    return combined
+    ex["week_order"] = ex["week_label"].map(ORDER_INDEX).fillna(999).astype(int)
+    my_ord = ORDER_INDEX.get(week_label, 999)
+    ex_prev = ex[ex["week_order"] < my_ord]
+    if "bankroll_week_final" in ex_prev.columns and not ex_prev["bankroll_week_final"].dropna().empty:
+        return float(ex_prev["bankroll_week_final"].dropna().iloc[-1])
+    return cfg["INITIAL_BANKROLL"]
 
 # ----------------------------
-# Main
+# MAIN
 # ----------------------------
 def main():
     os.makedirs(os.path.dirname(BETS_OUT_PATH), exist_ok=True)
@@ -707,37 +651,33 @@ def main():
     target_week_override = getenv_int_or_none("TARGET_WEEK")
     dprint("Resolved -> target_season:", target_season, "| TARGET_WEEK override:", target_week_override)
 
-    # Carga odds
     odds_cur_all = load_current_odds()
-    odds_cur_all = odds_cur_all[odds_cur_all["season"].eq(target_season)].copy()
+    odds_cur = odds_cur_all[odds_cur_all["season"].eq(target_season)].copy()
 
-    # Semana vigente
-    wk_label = (week_label_from_num(target_week_override)
-                if target_week_override is not None
-                else detect_current_week_label(odds_cur_all))
-    if not wk_label:
-        raise RuntimeError("No fue posible detectar la semana vigente desde odds.")
+    # Semanas disponibles en odds
+    weeks_present = sorted(pd.to_numeric(odds_cur["week"], errors="coerce").dropna().unique().tolist())
+    dprint("Semanas presentes en odds (season target):", weeks_present)
+
+    # Detectar semana vigente
+    wk_label_auto = detect_vigente_week_label(odds_cur)
+    wk_label = week_label_from_num(target_week_override) if target_week_override else wk_label_auto
     dprint("Semana elegida para picks:", wk_label)
 
-    # Limita odds a semana vigente
-    odds_cur = odds_cur_all[odds_cur_all["week_label"].astype(str).eq(str(wk_label))].copy()
+    # Filtrar a una sola semana
+    odds_cur = odds_cur[odds_cur["week_label"].astype(str).eq(wk_label)].copy()
 
-    # Pregame (historias + live)
+    # Cargar stats (4 prev + actual) y master
     stats_all = load_pregame_stats_for_seasons(target_season)
 
-    # Master
-    master_target = build_master(odds_cur, stats_all)
+    master_target = build_master(odds_cur.copy(), stats_all)
     dprint("Master target rows:", len(master_target))
+    have_cols = [c for c in master_target.columns if re.search(r'_(pre(_ewm)?|pre_ytd|pre_l8)$', c)]
+    dprint("Audit: columnas pregame presentes:", len(have_cols), "OK")
+    miss_h = (master_target[[c for c in master_target.columns if c.startswith("home_") and c.endswith(("_pre_ytd","_pre_ewm","_pre_l8"))]].isna().all(axis=1)).sum()
+    miss_a = (master_target[[c for c in master_target.columns if c.startswith("away_") and c.endswith(("_pre_ytd","_pre_ewm","_pre_l8"))]].isna().all(axis=1)).sum()
+    dprint("Audit: filas sin pregame (home)=", miss_h, "/ (away)=", miss_a, "de", len(master_target))
 
-    # Auditoría de pregame
-    home_cols = [c for c in master_target.columns if c.startswith("home_") and c.endswith(("_pre_ytd","_pre_ewm","_pre_l8"))]
-    away_cols = [c for c in master_target.columns if c.startswith("away_") and c.endswith(("_pre_ytd","_pre_ewm","_pre_l8"))]
-    dprint("Audit: columnas pregame presentes:", len(home_cols)+len(away_cols), "OK")
-    dprint("Audit: filas sin pregame (home)=", int(master_target[home_cols].isna().all(axis=1).sum()),
-           "/ (away)=", int(master_target[away_cols].isna().all(axis=1).sum()),
-           "de", len(master_target))
-
-    # Odds históricas
+    # Hist odds (4 temporadas previas)
     hist_frames = []
     for y in range(target_season-4, target_season):
         p = os.path.join(ARCHIVE_DIR, f"season={y}", "odds.csv")
@@ -761,24 +701,29 @@ def main():
     master_all = pd.concat([master_hist, master_target], ignore_index=True) if not master_hist.empty else master_target.copy()
     dprint("Master ALL rows (hist+target):", len(master_all))
 
-    # Self-learn adjusters
-    adj_team, adj_league = load_self_learn_adjusters()
+    # Self-learn (robusto)
+    sl = self_learn_adjusters()
+    league_delta = float(sl.get("league_calib_delta", 0.0))
+    hold_fallback = float(sl.get("hold_fallback", CFG["LH_FALLBACK_HOLD"]))
 
     # Modelo
-    test_preds = run_model(master_all, target_season, adj_team, adj_league)
+    test_preds = run_model(master_all, target_season)
 
-    # Unir probs con odds target (SOLO semana vigente)
+    # Odds + preds solo semana vigente
     cols_key = ["season","week","home_team","away_team"]
     need_cols = cols_key + ["week_label","schedule_date",
                             "decimal_home","decimal_away","ml_home","ml_away",
                             "market_prob_home_nv","market_prob_away_nv","home_line","spread_favorite","over_under_line"]
     merge_df = master_target[[c for c in need_cols if c in master_target.columns]].copy()
+    if merge_df.empty:
+        raise RuntimeError(f"No hay odds para la semana vigente {wk_label}.")
+    dprint("Post-merge odds+pred rows (semana vigente):", len(merge_df))
+
     if "week_label" not in merge_df.columns:
         merge_df["week_label"] = merge_df["week"].apply(week_label_from_num)
 
     pred = test_preds[["season","week","home_team","away_team","p_home_win_meta"]].copy()
     dfm  = merge_df.merge(pred, on=cols_key, how="inner")
-    dprint("Post-merge odds+pred rows (semana vigente):", len(dfm))
 
     # EV home/away
     homes = pd.DataFrame({
@@ -802,18 +747,14 @@ def main():
         m = ev_predictions["ml"].isna() & ev_predictions["decimal_odds"].notna()
         ev_predictions.loc[m, "ml"] = ev_predictions.loc[m, "decimal_odds"].apply(decimal_to_american)
 
-    ev_predictions = ev_predictions[pd.to_numeric(ev_predictions["decimal_odds"], errors="coerce").notna()].copy()
-    ev_predictions["decimal_odds"] = ev_predictions["decimal_odds"].astype(float)
-
-    # EV / edge
-    ev_predictions["ev"]   = ev_predictions["model_prob"]*(ev_predictions["decimal_odds"]-1) - (1-ev_predictions["model_prob"])
-    ev_predictions = ev_predictions.sort_values(["schedule_date","week","team","side"]).reset_index(drop=True)
-
-    # Sanitizado y DEVIG
+    # Sanitizado + DEVIG
     ev_base = sanitize_ev(ev_predictions, CFG)
     dprint(f"EV base rows para {wk_label} tras sanitize:", len(ev_base))
     ev_base["game_id"] = ev_base.apply(lambda r: make_game_id_row(r["week_label"], r["team"], r["opponent"]), axis=1)
-    ev_devig = devig_per_game(ev_base.copy(), single_side_mode=CFG["DEVIG_SINGLE_SIDE"])
+    ev_devig = devig_per_game(ev_base.copy(),
+                              single_side_mode=CFG["DEVIG_SINGLE_SIDE"],
+                              league_delta=league_delta,
+                              hold_fallback=hold_fallback)
 
     # edge (modelo vs mercado) y EV recálculo
     p = ev_devig["model_prob"].astype(float)
@@ -822,187 +763,173 @@ def main():
     ev_devig["edge"] = p - mkt
     ev_devig["ev"]   = p*(d-1) - (1-p)
 
-        # === AUDIT DIAGNÓSTICO (siempre activado) =================
+    # === AUDIT DIAGNÓSTICO (siempre activado) =================
     try:
         aud = ev_devig.copy()
-
-        # Asegurar tipos/columnas mínimas
         if "schedule_date" in aud.columns:
             aud["schedule_date"] = pd.to_datetime(aud["schedule_date"], errors="coerce", utc=True)
         else:
             aud["schedule_date"] = pd.NaT
 
-        required_cols = ["decimal_odds","model_prob","market_prob_nv","edge","ev",
-                         "week_label","team","opponent","side","game_id"]
+        required_cols = ["decimal_odds","model_prob","market_prob_nv","edge","ev","week_label","team","opponent","side","game_id"]
         for c in required_cols:
             if c not in aud.columns:
                 aud[c] = np.nan
 
-        # Confianza = |p - 0.5|
         aud["conf"] = (aud["model_prob"].astype(float) - 0.5).abs()
 
-        # Umbrales actuales (se verán reflejados en la auditoría)
-        tau         = float(CFG.get("EDGE_TAU", 0.06))
-        conf_min    = float(CFG.get("CONF_MIN", 0.09))
-        ev_base_min = float(CFG.get("EV_BASE_MIN", 0.012))
+        tau         = float(CFG.get("EDGE_TAU", 0.055))
+        conf_min    = float(CFG.get("CONF_MIN", 0.085))
+        ev_base_min = float(CFG.get("EV_BASE_MIN", 0.010))
 
-        # EV floor por fila (según bandas/pendiente)
         def _ev_floor_row(r):
             return ev_floor(float(r["decimal_odds"]), ev_base_min, ev_slope_for_row(r, CFG))
-
         aud["EV_floor"] = aud.apply(_ev_floor_row, axis=1)
 
-        # Flags de falla
         aud["fail_edge"] = aud["edge"].astype(float) < tau
         aud["fail_conf"] = aud["conf"].astype(float) < conf_min
-        aud["fail_ev"]   = aud["ev"].astype(float)   < aud["EV_floor"].astype(float)
+        aud["fail_ev"]   = aud["ev"].astype(float)   < np.maximum(aud["EV_floor"].astype(float), CFG["LH_MIN_POS_EV"])
 
-        # Orden legible
-        aud_disp = (
-            aud[
-                ["week_label","schedule_date","game_id","side","team","opponent",
-                 "decimal_odds","model_prob","market_prob_nv","edge","conf","ev","EV_floor",
-                 "fail_edge","fail_conf","fail_ev"]
-            ]
-            .sort_values(["week_label","schedule_date","game_id","side"], ascending=[True, True, True, True])
-            .reset_index(drop=True)
-        )
+        aud_disp = (aud[[
+            "week_label","schedule_date","game_id","side","team","opponent",
+            "decimal_odds","model_prob","market_prob_nv","edge","conf","ev","EV_floor",
+            "fail_edge","fail_conf","fail_ev"
+        ]].sort_values(["week_label","schedule_date","game_id","side"], ascending=[True, True, True, True])
+          .reset_index(drop=True))
 
-        # Dump completo (todos los juegos con métricas y flags)
         print("[AUDIT] Dump de TODOS los juegos (con métricas y flags):")
-        with pd.option_context("display.max_rows", 300, "display.max_columns", 50, "display.width", 200):
+        with pd.option_context("display.max_rows", 300, "display.max_columns", 60, "display.width", 220):
             print(aud_disp)
 
-        # Near-misses: muy cerca de pasar
         near = aud.copy()
         near["near_edge"] = near["edge"].astype(float) >= (tau * 0.85)
         near["near_conf"] = near["conf"].astype(float) >= (conf_min * 0.85)
-        near["near_ev"]   = near["ev"].astype(float)   >= (near["EV_floor"].astype(float) * 0.85)
-        near_miss = near[
-            (near["near_edge"] | near["near_conf"] | near["near_ev"]) &
-            (near["fail_edge"] | near["fail_conf"] | near["fail_ev"])
-        ].sort_values(
+        near["near_ev"]   = near["ev"].astype(float)   >= (np.maximum(near["EV_floor"].astype(float), CFG["LH_MIN_POS_EV"]) * 0.85)
+        near_miss = near[(near["near_edge"] | near["near_conf"] | near["near_ev"])
+                         & (near["fail_edge"] | near["fail_conf"] | near["fail_ev"])]
+        near_miss = near_miss.sort_values(
             ["week_label","schedule_date","game_id","edge","ev"],
             ascending=[True, True, True, False, False]
         )
-
         if not near_miss.empty:
             print("[AUDIT] Near-misses (candidatos que casi pasan) — top 12:")
-            with pd.option_context("display.max_rows", 200, "display.max_columns", 50, "display.width", 200):
-                print(near_miss[
-                    ["week_label","schedule_date","game_id","side","team","opponent",
-                     "decimal_odds","model_prob","market_prob_nv","edge","conf","ev","EV_floor",
-                     "fail_edge","fail_conf","fail_ev","near_edge","near_conf","near_ev"]
-                ].head(12))
+            with pd.option_context("display.max_rows", 200, "display.max_columns", 60, "display.width", 220):
+                print(near_miss[[
+                    "week_label","schedule_date","game_id","side","team","opponent",
+                    "decimal_odds","model_prob","market_prob_nv","edge","conf","ev","EV_floor",
+                    "fail_edge","fail_conf","fail_ev","near_edge","near_conf","near_ev"
+                ]].head(12))
         else:
             print("[AUDIT] Near-misses: (ninguno)")
 
-        # Resumen de por qué se caen
         fails = aud[["fail_edge","fail_conf","fail_ev"]].copy()
         total = len(fails)
         if total > 0:
             n_edge = int(fails["fail_edge"].sum())
             n_conf = int(fails["fail_conf"].sum())
             n_ev   = int(fails["fail_ev"].sum())
-            print(f"[AUDIT] Resumen de caídas (sobre {total} lados evaluados): "
-                  f"edge {n_edge}, conf {n_conf}, ev {n_ev}")
+            print(f"[AUDIT] Resumen de caídas (sobre {total} lados evaluados): edge {n_edge}, conf {n_conf}, ev {n_ev}")
         else:
             print("[AUDIT] Resumen de caídas: (no hay filas evaluadas)")
-
     except Exception as e:
         print("[AUDIT] WARN: auditoría no pudo ejecutarse:", repr(e))
     # === FIN AUDIT =============================================
 
-
-
-    # Selección con relajación escalonada hasta mínimo
+    # Selección base
     picks = pick_per_game_best(ev_devig, CFG, allow_two_sides=False)
     dprint("Candidatos tras pick_per_game_best (base):", len(picks))
 
+    # Relajación escalonada hasta MIN_BETS_PER_WEEK
     if len(picks) < CFG["MIN_BETS_PER_WEEK"]:
         dprint("Relaxation: semana por debajo de mínimo -> aplicando pasos.")
+        base_cfg = CFG.copy()
         for step in RELAX_STEPS:
-            CFG_mod = CFG.copy()
-            CFG_mod["EDGE_TAU"]   = step["EDGE_TAU"]
-            CFG_mod["CONF_MIN"]   = step["CONF_MIN"]
-            CFG_mod["EV_BASE_MIN"]= step["EV_BASE_MIN"]
-            allow_two = step.get("allow_two_sides", False)
-            dprint(f"Relax step -> EDGE_TAU={CFG_mod['EDGE_TAU']} | CONF_MIN={CFG_mod['CONF_MIN']} | EV_BASE_MIN={CFG_mod['EV_BASE_MIN']}{' | allow_two_sides=ON' if allow_two else ''}")
-            picks_relaxed = pick_per_game_best(ev_devig, CFG_mod, allow_two_sides=allow_two)
-            if len(picks_relaxed) >= CFG["MIN_BETS_PER_WEEK"]:
-                picks = picks_relaxed
+            CFG.update(step)
+            dprint(f"Relax step -> EDGE_TAU={CFG['EDGE_TAU']} | CONF_MIN={CFG['CONF_MIN']} | EV_BASE_MIN={CFG['EV_BASE_MIN']}" +
+                   (" | allow_two_sides=ON" if step.get("allow_two_sides") else ""))
+            # Refiltrar desde ev_devig (no recalc)
+            c = pick_per_game_best(ev_devig, CFG, allow_two_sides=step.get("allow_two_sides", False))
+            if len(c) >= CFG["MIN_BETS_PER_WEEK"]:
+                picks = c
                 break
-        if len(picks) < CFG["MIN_BETS_PER_WEEK"]:
+            else:
+                # conservar lo mejor si mejora
+                if len(c) > len(picks):
+                    picks = c
+        else:
             dprint("Relaxation: no se alcanzó el mínimo; devolviendo picks disponibles.")
-    # En cualquier caso, respeta el tope máximo
-    picks = picks.sort_values(["ev","edge"], ascending=[False,False]).head(CFG["MAX_BETS_PER_WEEK"])
+
+        # restaurar config base para no contaminar próxima corrida
+        for k, v in base_cfg.items(): CFG[k] = v
+
+    # Cap al máximo
+    if len(picks) > CFG["MAX_BETS_PER_WEEK"]:
+        picks = picks.sort_values(["ev","edge"], ascending=[False,False]).head(CFG["MAX_BETS_PER_WEEK"])
+
     dprint(f"Candidatos finales para {wk_label}:", len(picks))
     if not picks.empty:
-        print(picks[["week_label","schedule_date","game_id","side","team","opponent","decimal_odds","model_prob","market_prob_nv","edge","ev"]].to_string(index=False))
+        with pd.option_context("display.max_rows", 200, "display.max_columns", 60, "display.width", 220):
+            print(picks[["week_label","schedule_date","game_id","side","team","opponent",
+                         "decimal_odds","model_prob","market_prob_nv","edge","ev"]])
 
-    # Staking (usa BK0 para cap semanal interno, pero NO se escribe bankroll en CSV)
-    # BK0 se deriva del último bankroll_week_final previo, si existiera; aquí solo para stake cap
-    if os.path.exists(BETS_OUT_PATH):
-        try:
-            existing = pd.read_csv(BETS_OUT_PATH, low_memory=False)
-            if "schedule_date" in existing.columns:
-                existing["schedule_date"] = pd.to_datetime(existing["schedule_date"], errors="coerce", utc=True)
-            if "week_label" not in existing.columns and "week" in existing.columns:
-                existing["week_label"] = existing["week"].apply(week_label_from_num)
-        except Exception as e:
-            dprint("WARN: no se pudo leer bets.csv existente; se asumirá INITIAL_BANKROLL. err:", e)
-            existing = pd.DataFrame()
-    else:
-        existing = pd.DataFrame()
+    # ------------ Stake plan (usa BK0 pero NO exporta bankroll) ------------
+    existing = pd.read_csv(BETS_OUT_PATH, low_memory=False) if os.path.exists(BETS_OUT_PATH) else pd.DataFrame()
+    if "schedule_date" in existing.columns:
+        existing["schedule_date"] = pd.to_datetime(existing["schedule_date"], errors="coerce", utc=True)
+    if "week_label" not in existing.columns and "week" in existing.columns:
+        existing["week_label"] = existing["week"].apply(week_label_from_num)
 
-    # BK0 por semana: usa bankroll_week_final previo (si existe), sino inicial.
-    # Solo para calcular stake, no se escribe.
-    bk0 = CFG["INITIAL_BANKROLL"]
-    if existing is not None and not existing.empty and "bankroll_week_final" in existing.columns:
-        ex = existing.dropna(subset=["bankroll_week_final"]).copy()
-        if "week_label" not in ex.columns and "week" in ex.columns:
-            ex["week_label"] = ex["week"].apply(week_label_from_num)
-        # último finalizado
-        ex["week_order"] = ex["week_label"].map(ORDER_INDEX).fillna(999)
-        last = ex.sort_values("week_order").groupby("week_label")["bankroll_week_final"].last()
-        # toma la previa a la vigente
-        this_ord = ORDER_INDEX.get(wk_label, 999)
-        prev = [(ORDER_INDEX.get(wl,999), v) for wl,v in last.items() if ORDER_INDEX.get(wl,999) < this_ord]
-        if prev:
-            prev.sort(reverse=True)
-            bk0 = float(prev[0][1])
-    dprint(f"BK0 para {wk_label} (solo para caps): {bk0:.2f}")
+    BK0 = build_bk0_for_week(existing, wk_label, CFG)
+    dprint(f"BK0 para {wk_label} (solo para caps): {BK0:.2f}")
 
-    # Calcula stake por fila
+    # stake
     stakes = []
     for _, r in picks.iterrows():
-        st = kelly_stake(bk0, float(r["model_prob"]), float(r["decimal_odds"]), float(r["edge"]), CFG)
+        st = kelly_stake(BK0, float(r["model_prob"]), float(r["decimal_odds"]), float(r["edge"]), CFG)
         stakes.append(st)
     picks = picks.copy()
     picks["stake"] = np.round(stakes, 2)
-    picks["profit"] = np.nan  # se llena después del partido
-    # No incluimos 'bankroll' en CSV
+    picks["profit"] = np.nan  # se completará cuando termine el juego
 
-    # Orden de columnas legible
-    desired_order = [
+    # ----------------------------
+    # APPEND/UPSERT: solo semana vigente; nunca tocar semanas pasadas
+    # ----------------------------
+    # Ordenar columnas amigable
+    col_order = [
         "season","week","week_label","schedule_date",
         "side","team","opponent",
         "decimal_odds","ml","market_prob_nv","model_prob",
-        "ev","edge",
-        "week_order","game_id",
-        "stake","profit",
-        # opcionales que quizá existan en odds merge
-        "status","status_short","result","team_score","opponent_score","week_is_final"
+        "edge","ev","game_id","stake","profit"
     ]
-    for c in desired_order:
-        if c not in picks.columns:
-            picks[c] = pd.NA
-    picks = picks[desired_order]
+    for c in col_order:
+        if c not in picks.columns: picks[c] = pd.NA
+    picks = picks[col_order].copy()
 
-    # UPSERT SOLO semana vigente
-    combined = upsert_only_week(existing, picks, wk_label)
+    # Lectura existente y upsert solo por (season, week, game_id, side) de la semana vigente
+    if existing is not None and not existing.empty:
+        for c in col_order:
+            if c not in existing.columns: existing[c] = pd.NA
+
+        existing_keys = existing[existing["week_label"].astype(str).eq(wk_label)][["season","week","game_id","side"]]
+        new_keys = picks[["season","week","game_id","side"]]
+        mask_dupe = pd.merge(new_keys.assign(_k=1), existing_keys.assign(_k=1),
+                             on=["season","week","game_id","side"], how="left")["_k_y"].notna()
+        # Eliminar los que chocan en semana vigente
+        ex = existing[~existing["week_label"].astype(str).eq(wk_label)].copy()
+        dups = picks[mask_dupe.values]
+        if len(dups) > 0:
+            dprint(f"Upsert: se eliminarán {len(dups)} filas existentes de semanas modificables por clave match (upsert).")
+        combined = pd.concat([ex, picks], ignore_index=True)
+    else:
+        combined = picks.copy()
+
+    # Orden estable final
+    combined = combined[col_order]
+    combined = combined.sort_values(["week_label","schedule_date","game_id","side"]).reset_index(drop=True)
+
     combined.to_csv(BETS_OUT_PATH, index=False)
-    print(f"[select_bets] upsert wrote {BETS_OUT_PATH} | prev_rows={len(existing)} | total={len(combined)} | weeks_upserted=['{wk_label}']")
+    print(f"[select_bets] upsert wrote {BETS_OUT_PATH} | prev_rows={(0 if existing is None else len(existing))} | total={len(combined)} | weeks_upserted=['{wk_label}']")
 
 if __name__ == "__main__":
     main()
+
