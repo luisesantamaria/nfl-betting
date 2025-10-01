@@ -136,7 +136,6 @@ PY
           WEEK_SHIFT="1"
           if [ -n "${WEEK_SHIFT_INPUT:-}" ]; then WEEK_SHIFT="${WEEK_SHIFT_INPUT}"; fi
           echo "WEEK_SHIFT: ${WEEK_SHIFT}"
-
           python scripts/fetch_odds.py \
             --markets "h2h,spreads,totals" \
             --only-current-week \
