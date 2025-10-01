@@ -1,39 +1,55 @@
-name: persist-scores-pnl
+name: persist-scores
 
 on:
   workflow_dispatch: {}
   schedule:
     # TNF (Thursday Night Football)
+    # Viernes 00–06 UTC  ≈ Jueves 8:00 PM–2:00 AM ET
     - cron: "*/5 0-6 * * 5"
-    # London/Frankfurt (domingo temprano)
+
+    # Juegos internacionales del domingo (London/Frankfurt)
+    # Domingo 13–16 UTC ≈ 9:00 AM–12:00 PM ET
     - cron: "*/5 13-16 * * 0"
-    # Ventanas del domingo
+
+    # Ventanas del domingo SIN huecos (1 PM y 4:05/4:25 PM ET)
+    # Domingo 17–23 UTC ≈ 1:00 PM–7:59 PM ET
     - cron: "*/5 17-23 * * 0"
-    # SNF + buffer
+
+    # SNF (Sunday Night Football) + buffer de OT/retrasos
+    # Lunes 00–05 UTC ≈ Domingo 8:00 PM–12:59 AM ET
     - cron: "*/5 0-5 * * 1"
-    # MNF + buffer
+
+    # MNF (Monday Night Football) + buffer
+    # Martes 00–06 UTC ≈ Lunes 8:00 PM–1:59 AM ET
     - cron: "*/5 0-6 * * 2"
-    # EXTRA: Lunes 23:30 UTC
+
+    # Extra: último persist del lunes 23:30 UTC
     - cron: "30 23 * * 1"
 
-permissions:
-  contents: write
+concurrency:
+  group: persist-scores-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  persist-scores:
+  persist_scores:
     name: 1) Persist finished scores into odds
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install deps
         run: |
+          set -euxo pipefail
           python -m pip install --upgrade pip
-          pip install pandas requests numpy
+          pip install pandas numpy requests
 
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
@@ -43,94 +59,145 @@ jobs:
           set -euxo pipefail
           python scripts/persist_scores.py
 
-      - name: Commit & push (persist)
+      - name: Commit & push (rebase-safe)
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          set -e
-          git config user.name  "github-actions"
-          git config user.email "actions@github.com"
+          set -euxo pipefail
+          git config --global user.name  "github-actions"
+          git config --global user.email "actions@github.com"
+          git config --global --add safe.directory "$PWD"
+          git config --global pull.rebase true
+          git config --global rebase.autoStash true
+
           git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(scores): persist finished scores [skip ci]"
-            git push
-          else
-            echo "No changes to commit (persist)."
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
           fi
 
-  annotate-bets:
-    name: 2) Annotate bets (profit & bankroll per week)
-    runs-on: ubuntu-latest
-    needs: persist-scores
-    steps:
-      - uses: actions/checkout@v4
+          git commit -m "chore(scores): persist scores into odds [skip ci]"
+          git fetch origin "${BRANCH_NAME}"
+          git pull --rebase --autostash origin "${BRANCH_NAME}" || (git rebase --abort && git pull --rebase --autostash origin "${BRANCH_NAME}")
+          git push origin "${BRANCH_NAME}" || {
+            echo "Push failed, retrying after rebase..."
+            git pull --rebase --autostash origin "${BRANCH_NAME}"
+            git push origin "${BRANCH_NAME}"
+          }
 
-      - uses: actions/setup-python@v5
+  annotate_bets:
+    name: 2) Annotate bets (profit, bankroll, freeze finals)
+    runs-on: ubuntu-latest
+    needs: persist_scores
+    permissions:
+      contents: write
+    env:
+      BANKROLL_INITIAL: "1000"  # Ajusta si cambias tu anchor
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install deps
         run: |
+          set -euxo pipefail
           python -m pip install --upgrade pip
-          pip install pandas requests numpy
+          pip install pandas numpy
 
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
 
       - name: Annotate bets with profit & bankroll (live)
-        env:
-          BANKROLL_INITIAL: "1000"
         run: |
           set -euxo pipefail
           python scripts/annotate_bets_with_profit_and_bankroll.py
 
-      - name: Commit & push (annotate)
+      - name: Commit & push (rebase-safe)
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          set -e
-          git config user.name  "github-actions"
-          git config user.email "actions@github.com"
+          set -euxo pipefail
+          git config --global user.name  "github-actions"
+          git config --global user.email "actions@github.com"
+          git config --global --add safe.directory "$PWD"
+          git config --global pull.rebase true
+          git config --global rebase.autoStash true
+
           git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(annotate): bets profit & bankroll (freeze finals) [skip ci]"
-            git push
-          else
-            echo "No changes to commit (annotate)."
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
           fi
 
-  build-pnl:
-    name: 3) Build P&L (weekly final-only)
-    runs-on: ubuntu-latest
-    needs: annotate-bets
-    steps:
-      - uses: actions/checkout@v4
+          git commit -m "chore(annotate): bets profit & bankroll (freeze finals) [skip ci]"
+          git fetch origin "${BRANCH_NAME}"
+          git pull --rebase --autostash origin "${BRANCH_NAME}" || (git rebase --abort && git pull --rebase --autostash origin "${BRANCH_NAME}")
+          git push origin "${BRANCH_NAME}" || {
+            echo "Push failed, retrying after rebase..."
+            git pull --rebase --autostash origin "${BRANCH_NAME}"
+            git push origin "${BRANCH_NAME}"
+          }
 
-      - uses: actions/setup-python@v5
+  build_pnl:
+    name: 3) Build P&L (only final weeks)
+    runs-on: ubuntu-latest
+    needs: annotate_bets
+    permissions:
+      contents: write
+    env:
+      BANKROLL_INITIAL: "1000"  # mismo anchor
+      # Si tus CSV estuvieran en otro sitio, puedes inyectarlos:
+      # BPNL_BETS_CSV: "data/live/bets.csv"
+      # BPNL_ODDS_CSV: "data/live/odds.csv"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install deps
         run: |
+          set -euxo pipefail
           python -m pip install --upgrade pip
-          pip install pandas requests numpy
+          pip install pandas numpy
 
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
 
       - name: Build PnL (live)
-        env:
-          BANKROLL_INITIAL: "1000"
-          # BPNL_BETS_CSV / BPNL_ODDS_CSV si usas rutas custom
         run: |
           set -euxo pipefail
           python scripts/build_pnl_live.py
 
-      - name: Commit & push (pnl)
+      - name: Commit & push (rebase-safe)
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          set -e
-          git config user.name  "github-actions"
-          git config user.email "actions@github.com"
+          set -euxo pipefail
+          git config --global user.name  "github-actions"
+          git config --global user.email "actions@github.com"
+          git config --global --add safe.directory "$PWD"
+          git config --global pull.rebase true
+          git config --global rebase.autoStash true
+
           git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(pnl): build weekly P&L (final weeks only) [skip ci]"
-            git push
-          else
-            echo "No changes to commit (pnl)."
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
           fi
+
+          git commit -m "chore(pnl): build P&L live (final weeks only) [skip ci]"
+          git fetch origin "${BRANCH_NAME}"
+          git pull --rebase --autostash origin "${BRANCH_NAME}" || (git rebase --abort && git pull --rebase --autostash origin "${BRANCH_NAME}")
+          git push origin "${BRANCH_NAME}" || {
+            echo "Push failed, retrying after rebase..."
+            git pull --rebase --autostash origin "${BRANCH_NAME}"
+            git push origin "${BRANCH_NAME}"
+          }
