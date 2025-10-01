@@ -823,8 +823,8 @@ def main():
     ev_devig["ev"]   = p*(d-1) - (1-p)
 
     # === AUDIT DIAGNÓSTICO (siempre activado) =================
-try:
-    aud = ev_devig.copy()
+    try:
+        aud = ev_devig.copy()
 
     # Asegurar tipos/columnas mínimas
     if "schedule_date" in aud.columns:
@@ -904,8 +904,8 @@ try:
     else:
         print("[AUDIT] Resumen de caídas: (no hay filas evaluadas)")
 
-except Exception as e:
-    print("[AUDIT] WARN: auditoría no pudo ejecutarse:", repr(e))
+    except Exception as e:
+        print("[AUDIT] WARN: auditoría no pudo ejecutarse:", repr(e))
 # === FIN AUDIT =============================================
 
 
