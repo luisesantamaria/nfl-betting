@@ -169,7 +169,7 @@ def load_current_odds() -> pd.DataFrame:
     return df
 
 def load_pregame_stats_for_seasons(target_season: int) -> pd.DataFrame:
-    frames, seasons_seen = [], []
+    frames = []
     for y in range(target_season-4, target_season):
         p = os.path.join(ARCHIVE_DIR, f"season={y}", "stats.csv")
         if os.path.exists(p):
@@ -177,14 +177,13 @@ def load_pregame_stats_for_seasons(target_season: int) -> pd.DataFrame:
             tmp["season"] = pd.to_numeric(tmp["season"], errors="coerce").astype("Int64")
             tmp["week"]   = pd.to_numeric(tmp["week"], errors="coerce").astype("Int64")
             tmp["team"]   = tmp["team"].astype(str).map(norm_team)
-            frames.append(tmp); seasons_seen.append(y)
+            frames.append(tmp)
     if os.path.exists(LIVE_STATS_PATH):
         tmp = pd.read_csv(LIVE_STATS_PATH, low_memory=False)
         tmp["season"] = pd.to_numeric(tmp["season"], errors="coerce").astype("Int64")
         tmp["week"]   = pd.to_numeric(tmp["week"], errors="coerce").astype("Int64")
         tmp["team"]   = tmp["team"].astype(str).map(norm_team)
         frames.append(tmp)
-        seasons_seen.append(int(pd.to_numeric(tmp["season"], errors="coerce").dropna().max()))
     if not frames:
         raise FileNotFoundError("No se encontraron stats pregame para entrenar/pred.")
     df = pd.concat(frames, ignore_index=True)
@@ -198,7 +197,7 @@ def load_pregame_stats_for_seasons(target_season: int) -> pd.DataFrame:
 def detect_current_week_from_odds(odds_season_df: pd.DataFrame) -> int:
     """
     Si hay múltiples semanas en odds:
-      - prioriza la semana máxima cuyo schedule_date >= (now_utc - 18h)  (evita semanas ya muy pasadas)
+      - prioriza la semana máxima cuyo schedule_date >= (now_utc - 18h)
       - si nada cumple, usa la semana máxima pura.
     """
     now_utc = datetime.now(timezone.utc)
@@ -206,7 +205,6 @@ def detect_current_week_from_odds(odds_season_df: pd.DataFrame) -> int:
     dprint("Semanas presentes en odds (season target):", weeks)
     if not weeks:
         raise RuntimeError("No hay semanas en odds para la temporada target.")
-    # Candidatas con fecha futura o muy reciente
     mask = odds_season_df["schedule_date"] >= (now_utc - timedelta(hours=18))
     cand = odds_season_df.loc[mask, "week"].dropna().astype(int).unique().tolist()
     if cand:
@@ -266,7 +264,7 @@ def build_master(odds_df: pd.DataFrame, pre_df: pd.DataFrame) -> pd.DataFrame:
     return m
 
 # ----------------------------
-# Modelo + métricas + self-learn ligera
+# Modelo + métricas
 # ----------------------------
 def run_model(master_all: pd.DataFrame, target_season: int):
     df = master_all.copy()
@@ -326,6 +324,8 @@ def run_model(master_all: pd.DataFrame, target_season: int):
     X_val   = val_df[feat_cols].copy()
     X_test  = test_df[feat_cols].copy()
 
+    dprint(f"Features usadas: {len(feat_cols)} | train_rows={len(X_train)} | val_rows={len(X_val)} | test_rows={len(X_test)}")
+
     train_meds = X_train.median(numeric_only=True)
     X_train = X_train.fillna(train_meds); X_val = X_val.fillna(train_meds); X_test = X_test.fillna(train_meds)
 
@@ -362,24 +362,19 @@ def run_model(master_all: pd.DataFrame, target_season: int):
     m_tr = safe_metrics(y_train, iso_global.transform(p_tr))
     m_va = safe_metrics(y_val,   iso_global.transform(p_va))
 
-    # 'test' solo se usa para score out-of-sample de la temporada target (no entrena)
-    if len(p_te):
-        # NO conocemos la verdad de 'test' en vivo; imprimimos score solo si hay etiquetas
-        if "home_win" in test_df.columns and test_df["home_win"].notna().any():
-            y_te = test_df["home_win"].dropna().astype(int).values
-            m_te = safe_metrics(y_te, iso_global.transform(p_te[:len(y_te)]))
-            print(f"Model Results:\ntrain | ACC {m_tr['ACC']:.3f} | ROC_AUC {m_tr['ROC_AUC']:.3f} | LOGLOSS {m_tr['LOGLOSS']:.3f}\n"
-                  f"val   | ACC {m_va['ACC']:.3f} | ROC_AUC {m_va['ROC_AUC']:.3f} | LOGLOSS {m_va['LOGLOSS']:.3f}\n"
-                  f"test* | ACC {m_te['ACC']:.3f} | ROC_AUC {m_te['ROC_AUC']:.3f} | LOGLOSS {m_te['LOGLOSS']:.3f}")
-        else:
-            print(f"Model Results:\ntrain | ACC {m_tr['ACC']:.3f} | ROC_AUC {m_tr['ROC_AUC']:.3f} | LOGLOSS {m_tr['LOGLOSS']:.3f}\n"
-                  f"val   | ACC {m_va['ACC']:.3f} | ROC_AUC {m_va['ROC_AUC']:.3f} | LOGLOSS {m_va['LOGLOSS']:.3f}\n"
-                  f"test* | ACC ---  | ROC_AUC ---  | LOGLOSS ---")
+    # 'test' solo se usa para score out-of-sample de la temporada target (si hay etiquetas)
+    if len(p_te) and test_df["home_win"].notna().any():
+        y_te = test_df["home_win"].dropna().astype(int).values
+        m_te = safe_metrics(y_te, iso_global.transform(p_te[:len(y_te)]))
+        print(f"Model Results:\ntrain | ACC {m_tr['ACC']:.3f} | ROC_AUC {m_tr['ROC_AUC']:.3f} | LOGLOSS {m_tr['LOGLOSS']:.3f}\n"
+              f"val   | ACC {m_va['ACC']:.3f} | ROC_AUC {m_va['ROC_AUC']:.3f} | LOGLOSS {m_va['LOGLOSS']:.3f}\n"
+              f"test* | ACC {m_te['ACC']:.3f} | ROC_AUC {m_te['ROC_AUC']:.3f} | LOGLOSS {m_te['LOGLOSS']:.3f}")
     else:
         print(f"Model Results:\ntrain | ACC {m_tr['ACC']:.3f} | ROC_AUC {m_tr['ROC_AUC']:.3f} | LOGLOSS {m_tr['LOGLOSS']:.3f}\n"
-              f"val   | ACC {m_va['ACC']:.3f} | ROC_AUC {m_va['ROC_AUC']:.3f} | LOGLOSS {m_va['LOGLOSS']:.3f}")
+              f"val   | ACC {m_va['ACC']:.3f} | ROC_AUC {m_va['ROC_AUC']:.3f} | LOGLOSS {m_va['LOGLOSS']:.3f}\n"
+              f"test* | ACC ---  | ROC_AUC ---  | LOGLOSS ---")
 
-    # Probabilidades calibradas para temporada target
+    # Preds calibradas para temporada target
     p_te_cal = iso_global.transform(p_te) if len(p_te) else np.array([])
 
     # Meta modelo con señal de spread sencilla
@@ -400,7 +395,6 @@ def run_model(master_all: pd.DataFrame, target_season: int):
     meta_test = meta_matrix(test_df, p_te_cal, p_te_sp) if len(test_df) else pd.DataFrame()
     meta_lr = LogisticRegression(C=1.0, solver="liblinear", max_iter=300)
     if len(meta_test):
-        # Entrena metamodelo con validación (no con test target)
         p_va_sp = prior_lr.predict_proba(val_df[["home_line"]])[:,1]
         meta_val = meta_matrix(val_df, iso_global.transform(p_va), p_va_sp)
         meta_lr.fit(meta_val, y_val)
@@ -515,14 +509,7 @@ def ensure_min_per_week(cand_week: pd.DataFrame, cfg) -> pd.DataFrame:
         return cand_week.sort_values(["ev","edge"], ascending=[False,False]).head(target_max)
 
     dprint("Relaxation: semana por debajo de mínimo -> aplicando pasos.")
-    base_cfg = dict(EDGE_TAU=cfg["EDGE_TAU"], CONF_MIN=cfg["CONF_MIN"], EV_BASE_MIN=cfg["EV_BASE_MIN"])
-    ev_base = cand_week.copy()  # ya pasó filtros básicos; recalcularemos con ajustes
-
-    # Nota: para reintentar, necesitamos volver a filtrar desde los candidatos previos a pick_per_game_best.
-    # Para simplificar guardamos las columnas esenciales:
-    needed = ["season","week","week_label","schedule_date","side","team","opponent",
-              "decimal_odds","ml","market_prob_nv","model_prob","ev","edge","game_id","week_order"]
-    ev_base = ev_base[needed].copy()
+    base = cand_week.copy()
 
     for step in cfg.get("RELAX_STEPS", []):
         cfg["EDGE_TAU"]   = step["EDGE_TAU"]
@@ -530,8 +517,7 @@ def ensure_min_per_week(cand_week: pd.DataFrame, cfg) -> pd.DataFrame:
         cfg["EV_BASE_MIN"]= step["EV_BASE_MIN"]
         dprint(f"Relax step -> EDGE_TAU={cfg['EDGE_TAU']:.3f} | CONF_MIN={cfg['CONF_MIN']:.3f} | EV_BASE_MIN={cfg['EV_BASE_MIN']:.3f}")
 
-        # Re-run pick rules sobre TODO el conjunto semanal original (no solo los ya filtrados)
-        tmp = sanitize_ev(ev_base.copy(), cfg)  # vuelve a aplicar CONF/odds, etc.
+        tmp = sanitize_ev(base.copy(), cfg)
         tmp = devig_per_game(tmp, cfg["DEVIG_SINGLE_SIDE"])
         p = tmp["model_prob"].astype(float); dds = tmp["decimal_odds"].astype(float); m = tmp["market_prob_nv"].astype(float)
         tmp["edge"] = p - m
@@ -540,7 +526,6 @@ def ensure_min_per_week(cand_week: pd.DataFrame, cfg) -> pd.DataFrame:
         if len(out) >= target_min:
             return out.sort_values(["ev","edge"], ascending=[False,False]).head(target_max)
 
-    # No alcanzamos el mínimo ni con relajación: devolvemos lo que haya (cero o pocos)
     dprint("Relaxation: no se alcanzó el mínimo; devolviendo picks disponibles.")
     return cand_week.sort_values(["ev","edge"], ascending=[False,False]).head(target_max)
 
@@ -561,7 +546,6 @@ def upsert_only_week(existing: pd.DataFrame, new_rows: pd.DataFrame, target_week
     if "week_label" not in ex.columns and "week" in ex.columns:
         ex["week_label"] = ex["week"].apply(week_label_from_num)
 
-    # Filas que se van a eliminar (claves que colisionan en la semana vigente)
     have = set(map(tuple, ex[APPEND_KEYS].astype(object).to_numpy().tolist())) if not ex.empty else set()
     new_keys = list(map(tuple, new_rows[APPEND_KEYS].astype(object).to_numpy().tolist()))
     mask_match = pd.Series(new_keys).isin(have)
@@ -569,11 +553,9 @@ def upsert_only_week(existing: pd.DataFrame, new_rows: pd.DataFrame, target_week
     if mask_match.any():
         dprint(f"Upsert: se eliminarán {mask_match.sum()} filas existentes de semanas modificables por clave match (upsert).")
 
-    # Excluye de ex SOLO la semana vigente con las claves a reemplazar
     if not ex.empty:
         m_same_week = ex["week_label"].astype(str).eq(str(target_week_label))
         if m_same_week.any():
-            # elimina las filas de esa semana que tengan la misma clave
             ex_keys = set(map(tuple, ex.loc[m_same_week, APPEND_KEYS].astype(object).to_numpy().tolist()))
             new_keys_set = set(new_keys)
             clash = ex_keys.intersection(new_keys_set)
@@ -582,7 +564,6 @@ def upsert_only_week(existing: pd.DataFrame, new_rows: pd.DataFrame, target_week
                 ex = pd.concat([ex.loc[~m_same_week], ex.loc[m_same_week & ~clash_idx]], ignore_index=True)
 
     combined = pd.concat([ex, new_rows], ignore_index=True)
-
     return combined
 
 # ----------------------------
@@ -633,7 +614,6 @@ def main():
     # Filtra a SOLO esa semana (prohíbe semanas pasadas/futuras)
     odds_cur = odds_cur_season[odds_cur_season["week"].eq(target_week)].copy()
     if odds_cur.empty:
-        # Mensaje explícito con pistas
         semanas = odds_cur_season["week"].dropna().unique().astype(int).tolist()
         raise RuntimeError(f"No hay odds para la semana {wk_label}. Semanas presentes en odds: {semanas}")
 
@@ -686,6 +666,7 @@ def main():
 
     pred = test_preds[["season","week","home_team","away_team","p_home_win_meta"]].copy()
     dfm  = merge_df.merge(pred, on=cols_key, how="inner")
+    dprint("Post-merge odds+pred rows (semana vigente):", len(dfm))
 
     # EV home/away
     homes = pd.DataFrame({
@@ -717,7 +698,10 @@ def main():
 
     # Limpieza y devig
     ev_base = sanitize_ev(ev_all, CFG)
-    ev_base = ev_base[ev_base["week_label"].astype(str).eq(week_label)]  # **solo semana vigente**
+    # >>>>>>>>> FIX: usar wk_label correcto
+    ev_base = ev_base[ev_base["week_label"].astype(str).eq(wk_label)]  # **solo semana vigente**
+    dprint(f"EV base rows para {wk_label} tras sanitize: {len(ev_base)}")
+
     ev_base["game_id"] = ev_base.apply(lambda r: make_game_id_row(r["week_label"], r["team"], r["opponent"]), axis=1)
     ev_devig = devig_per_game(ev_base.copy(), single_side_mode=CFG["DEVIG_SINGLE_SIDE"])
 
@@ -729,13 +713,16 @@ def main():
 
     # pick base
     cand_base = pick_per_game_best(ev_devig, CFG)
+    dprint(f"Candidatos tras pick_per_game_best: {len(cand_base)}")
     # asegurar mínimo por semana
     cand = ensure_min_per_week(cand_base, CFG)
+    dprint(f"Candidatos finales para {wk_label}: {len(cand)}")
 
-    dprint(f"Candidatos finales para {week_label}: {len(cand)}")
     if len(cand):
         print(cand[["week_label","schedule_date","game_id","side","team","opponent","decimal_odds","model_prob","market_prob_nv","edge","ev"]]
               .sort_values(["schedule_date","game_id"]).to_string(index=False))
+    else:
+        dprint("No hay picks finales para la semana vigente.")
 
     # Staking (simple Kelly fraccional; NO guardamos 'bankroll' en CSV)
     def kelly_fraction_scaled(edge, cfg):
@@ -790,12 +777,9 @@ def main():
         if c not in planned.columns:
             planned[c] = pd.NA
 
-    # Orden amigable (y NO incluimos 'bankroll')
     planned_out = order_output_columns(planned)
-
     # UPSERT SOLO SEMANA VIGENTE
     combined = upsert_only_week(existing, planned_out, wk_label)
-
     # Asegurar orden amigable global
     combined_out = order_output_columns(combined)
 
@@ -804,4 +788,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
