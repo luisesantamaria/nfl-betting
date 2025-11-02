@@ -8,7 +8,6 @@ concurrency:
   cancel-in-progress: true
 
 on:
-  # Jueves 14:00 UTC == Jueves 08:00 America/Mexico_City (UTC-6)
   schedule:
     - cron: "0 14 * * 4"
   workflow_dispatch:
